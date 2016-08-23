@@ -28,14 +28,14 @@ const
   SubToolMake = 'make';
   SubToolMakePriority = 1000; // higher than FPC
 
-  SubToolDefault = 'External Tool';
+  SubToolDefault = 'External Tool'; // this parser simply writes all output to Messages window
   SubToolDefaultPriority = 0;
 
   AbortedExitCode = 12321;
 
 const
   IDEToolCompilePackage = 'Package';
-  IDEToolCompileProject = 'Project';
+  IDEToolCompileProject = 'Project'; // the active project
   IDEToolCompileIDE     = 'IDE';
 type
 
@@ -1693,9 +1693,9 @@ begin
   if (Cnt>1) then begin
     Prev:=Items[Cnt-2];
     if MsgLine.Filename=Prev.Filename then
-    MsgLine.fFilename:=Prev.Filename;
+      MsgLine.fFilename:=Prev.Filename;
     if MsgLine.OriginalLine=Prev.OriginalLine then
-    MsgLine.fOriginalLine:=Prev.OriginalLine;
+      MsgLine.fOriginalLine:=Prev.OriginalLine;
   end;
 
   LineChanged(MsgLine);
@@ -2129,8 +2129,7 @@ begin
     Result:=CreateRelativePath(Result,FLines.BaseDirectory);
 end;
 
-procedure TMessageLine.ShareStrings(const ShareStringEvent: TETShareStringEvent
-  );
+procedure TMessageLine.ShareStrings(const ShareStringEvent: TETShareStringEvent);
 var
   i: Integer;
   s: String;

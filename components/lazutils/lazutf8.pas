@@ -18,16 +18,16 @@ unit LazUTF8;
 
 {$mode objfpc}{$H+}{$inline on}
 
-{$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
-  {$DEFINE ReallyUseUTF8RTL}
-{$IFEND}
+{$i lazutils_defines.inc}
+
 interface
 
 uses
-  {$IFDEF ReallyUseUTF8RTL}
   {$ifdef unix}
-  cwstring, // UTF8 RTL on Unix requires this. Must be used although it pulls in clib.
+  // WideCompare* functions on Unix requires this. Must be used although it pulls in clib.
+  cwstring,
   {$endif}
+  {$IFDEF UTF8_RTL}
   FPCAdds,
   {$ENDIF}
   {$ifdef windows}
@@ -42,35 +42,47 @@ function NeedRTLAnsi: boolean;// true if system encoding is not UTF-8
 procedure SetNeedRTLAnsi(NewValue: boolean);
 
 // UTF8ToSys works like UTF8ToAnsi but more independent of widestringmanager
-function UTF8ToSys(const s: string): string; overload; {$IFDEF ReallyUseUTF8RTL}inline;{$ENDIF}
-function UTF8ToSys(const AFormatSettings: TFormatSettings): TFormatSettings; overload; {$IFDEF ReallyUseUTF8RTL}inline;{$ENDIF}
+function UTF8ToSys(const s: string): string; overload; {$IFDEF UTF8_RTL}inline;{$ENDIF}
+function UTF8ToSys(const AFormatSettings: TFormatSettings): TFormatSettings; overload; {$IFDEF UTF8_RTL}inline;{$ENDIF}
 
 // SysToUTF8 works like AnsiToUTF8 but more independent of widestringmanager
-function SysToUTF8(const s: string): string; overload;
+function SysToUTF8(const s: string): string; overload; {$IFDEF UTF8_RTL}inline;{$ENDIF}
 function SysToUTF8(const AFormatSettings: TFormatSettings): TFormatSettings; overload;
 
 // converts OEM encoded string to UTF8 (used with some Windows specific functions)
-function ConsoleToUTF8(const s: string): string;
+function ConsoleToUTF8(const s: string): string; {$IFDEF UTF8_RTL}inline;{$ENDIF}
 // converts UTF8 string to console encoding (used by Write, WriteLn)
-function UTF8ToConsole(const s: string): string;
-{$IFDEF MSWindows}
+function UTF8ToConsole(const s: string): string; {$IFDEF UTF8_RTL}inline;{$ENDIF}
+
 // for all Windows supporting 8bit codepages (e.g. not WinCE)
 // converts string in Windows code page to UTF8 (used with some Windows specific functions)
-function WinCPToUTF8(const s: string): string;
+function WinCPToUTF8(const s: string): string; {$ifdef WinCe}inline;{$endif}
 // converts UTF8 string to Windows code page encoding (used by Write, WriteLn)
-function UTF8ToWinCP(const s: string): string;
-{$ENDIF}
+function UTF8ToWinCP(const s: string): string; {$ifdef WinCe}inline;{$endif}
 
 function ParamStrUTF8(Param: Integer): string;
 
+{$ifdef windows}
+procedure GetFormatSettingsUTF8;
+procedure GetLocaleFormatSettingsUTF8(LCID: Integer; var aFormatSettings: TFormatSettings);
+{$endif}
+
 function GetEnvironmentStringUTF8(Index: Integer): string;
 function GetEnvironmentVariableUTF8(const EnvVar: string): String;
-
 function SysErrorMessageUTF8(ErrorCode: Integer): String;
 
-function UTF8CharacterLength(p: PChar): integer;
-function UTF8Length(const s: string): PtrInt;
+// Returns the size of one codepoint in bytes.
+function UTF8CharacterLength(p: PChar): integer; inline;
+// Fast version of UTF8CharacterLength. Assumes the UTF-8 codepoint is valid.
+function UTF8CharacterLengthFast(p: PChar): integer; inline;
+
+function UTF8Length(const s: string): PtrInt; inline;
 function UTF8Length(p: PChar; ByteCount: PtrInt): PtrInt;
+// Fast versions of UTF8Length. They assume the UTF-8 data is valid.
+function UTF8LengthFast(const s: string): PtrInt; inline;
+function UTF8LengthFast(p: PChar; ByteCount: PtrInt): PtrInt;
+
+// Functions dealing with unicode number U+xxx.
 function UTF8CharacterToUnicode(p: PChar; out CharLen: integer): Cardinal;
 function UnicodeToUTF8(CodePoint: cardinal): string;
 function UnicodeToUTF8(CodePoint: cardinal; Buf: PChar): integer;
@@ -80,6 +92,8 @@ function UTF8ToDoubleByteString(const s: string): string;
 function UTF8ToDoubleByte(UTF8Str: PChar; Len: PtrInt; DBStr: PByte): PtrInt;
 function UTF8FindNearestCharStart(UTF8Str: PChar; Len: SizeInt;
                                   BytePos: SizeInt): SizeInt;
+function Utf8TryFindCodepointStart(AString: PChar; var CurPos: PChar; out CharLen: Integer): Boolean;
+function Utf8TryFindCodepointStart(const AString: String; var Index: Integer; out CharLen: Integer): Boolean;
 // find the n-th UTF8 character, ignoring BIDI
 function UTF8CharStart(UTF8Str: PChar; Len, CharIndex: PtrInt): PChar;
 // find the byte index of the n-th UTF8 character, ignoring BIDI (byte len of substr)
@@ -93,8 +107,14 @@ function UTF8Pos(const SearchForText, SearchInText: string; StartPos: SizeInt = 
 function UTF8PosP(SearchForText: PChar; SearchForTextLen: SizeInt;
   SearchInText: PChar; SearchInTextLen: SizeInt): PChar;
 function UTF8Copy(const s: string; StartCharIndex, CharCount: PtrInt): string;
+{$IFnDEF NO_CP_RTL}
+procedure UTF8Delete(var s: Utf8String; StartCharIndex, CharCount: PtrInt);
+{$ENDIF}
 procedure UTF8Delete(var s: String; StartCharIndex, CharCount: PtrInt);
-procedure UTF8Insert(const source: String; var s: string; StartCharIndex: PtrInt);
+{$IFnDEF NO_CP_RTL}
+procedure UTF8Insert(const source: Utf8String; var s: Utf8String; StartCharIndex: PtrInt);
+{$ENDIF}
+procedure UTF8Insert(const source: String; var s: String; StartCharIndex: PtrInt);
 function UTF8StringReplace(const S, OldPattern, NewPattern: String;
   Flags: TReplaceFlags; ALanguage: string=''): String;
 
@@ -116,6 +136,11 @@ function UTF8LeftStr(const AText: String; const ACount: Integer): String;
 function UTF8RightStr(const AText: String; const ACount: Integer): String;
 function UTF8QuotedStr(const S, Quote: string): string;
 //Utf8 version of MidStr is just Utf8Copy with same parameters, so it is not implemented here
+function Utf8StartsText(const ASubText, AText: string): Boolean;
+function Utf8EndsText(const ASubText, AText: string): Boolean;
+function Utf8ReverseString(p: PChar; const ByteCount: LongInt): string;
+function Utf8ReverseString(const AText: string): string; inline;
+function Utf8RPos(const Substr, Source: string): integer;
 
 function UTF8WrapText(S, BreakStr :string; BreakChars :TSysCharSet; MaxCol: integer): string; overload;
 function UTF8WrapText(S :string; MaxCol :integer) :string; overload;
@@ -140,7 +165,7 @@ function UTF8CompareStr(const S1, S2: string): PtrInt; inline;
 function UTF8CompareStrP(S1, S2: PChar): PtrInt;
 function UTF8CompareStr(S1: PChar; Count1: SizeInt; S2: PChar; Count2: SizeInt): PtrInt;
 function UTF8CompareText(const S1, S2: string): PtrInt;
-function UTF8CompareStrCollated(const S1, S2: string): PtrInt;
+function UTF8CompareStrCollated(const S1, S2: string): PtrInt; {$IFnDEF ACP_RTL}inline;{$endif}
 function CompareStrListUTF8LowerCase(List: TStringList; Index1, Index2: Integer): Integer;
 
 type
@@ -251,7 +276,7 @@ end;
 
 function UTF8ToSys(const s: string): string;
 begin
-  {$IFDEF ReallyUseUTF8RTL}
+  {$IFDEF UTF8_RTL}
   Result:=s;
   {$ELSE}
   if NeedRTLAnsi and (not IsASCII(s)) then
@@ -263,7 +288,7 @@ end;
 
 function SysToUTF8(const s: string): string;
 begin
-  {$IFDEF ReallyUseUTF8RTL}
+  {$IFDEF UTF8_RTL}
   Result:=s;
   {$ELSE}
   if NeedRTLAnsi and (not IsASCII(s)) then
@@ -297,13 +322,13 @@ begin
 end;
 
 function UTF8ToSys(const AFormatSettings: TFormatSettings): TFormatSettings;
-{$IFnDEF ReallyUseUTF8RTL}
+{$IFnDEF UTF8_RTL}
 var
   i: Integer;
 {$ENDIF}
 begin
   Result := AFormatSettings;
-  {$IFnDEF ReallyUseUTF8RTL}
+  {$IFnDEF UTF8_RTL}
   Result.CurrencyString := UTF8ToSys(AFormatSettings.CurrencyString);
   for i:=1 to 12 do begin
     Result.LongMonthNames[i] := UTF8ToSys(AFormatSettings.LongMonthNames[i]);
@@ -345,44 +370,66 @@ begin
   Result := SysToUTF8(SysUtils.SysErrorMessage(ErrorCode));
 end;
 
-function UTF8CharacterLength(p: PChar): integer;
+function UTF8CharacterLengthFull(p: PChar): integer;
 begin
-  if p<>nil then begin
-    if ord(p^)<%11000000 then begin
-      // regular single byte character (#0 is a character, this is pascal ;)
-      Result:=1;
-    end
-    else begin
-      // multi byte
-      if ((ord(p^) and %11100000) = %11000000) then begin
-        // could be 2 byte character
-        if (ord(p[1]) and %11000000) = %10000000 then
-          Result:=2
-        else
-          Result:=1;
-      end
-      else if ((ord(p^) and %11110000) = %11100000) then begin
-        // could be 3 byte character
-        if ((ord(p[1]) and %11000000) = %10000000)
-        and ((ord(p[2]) and %11000000) = %10000000) then
-          Result:=3
-        else
-          Result:=1;
-      end
-      else if ((ord(p^) and %11111000) = %11110000) then begin
-        // could be 4 byte character
-        if ((ord(p[1]) and %11000000) = %10000000)
-        and ((ord(p[2]) and %11000000) = %10000000)
-        and ((ord(p[3]) and %11000000) = %10000000) then
-          Result:=4
-        else
-          Result:=1;
-      end
+  case p^ of
+  #0..#191: // %11000000
+    // regular single byte character (#0 is a character, this is Pascal ;)
+    Result:=1;
+  #192..#223: // p^ and %11100000 = %11000000
+    begin
+      // could be 2 byte character
+      if (ord(p[1]) and %11000000) = %10000000 then
+        Result:=2
       else
         Result:=1;
     end;
-  end else
-    Result:=0;
+  #224..#239: // p^ and %11110000 = %11100000
+    begin
+      // could be 3 byte character
+      if ((ord(p[1]) and %11000000) = %10000000)
+      and ((ord(p[2]) and %11000000) = %10000000) then
+        Result:=3
+      else
+        Result:=1;
+    end;
+  #240..#247: // p^ and %11111000 = %11110000
+    begin
+      // could be 4 byte character
+      if ((ord(p[1]) and %11000000) = %10000000)
+      and ((ord(p[2]) and %11000000) = %10000000)
+      and ((ord(p[3]) and %11000000) = %10000000) then
+        Result:=4
+      else
+        Result:=1;
+    end;
+  else
+    Result:=1;
+  end;
+end;
+
+function UTF8CharacterLength(p: PChar): integer; inline;
+begin
+  if p=nil then exit(0);
+  if p^<#192 then exit(1);
+  Result:=UTF8CharacterLengthFull(p);
+end;
+
+function UTF8CharacterLengthFast(p: PChar): integer;
+begin
+  case p^ of
+    #0..#191   : Result := 1;
+    #192..#223 : Result := 2;
+    #224..#239 : Result := 3;
+    #240..#247 : Result := 4;
+    #248..#255 : Result := 1;
+    // Theoretically UTF-8 supports length 1-7, but since 2003, RFC 3629 limits
+    // it to 1-4 bytes.
+    // This is an inline function, so keep the function short.
+    //#248..#251   : Result := 5;
+    //#252, #253   : Result := 6;
+    //#254         : Result := 7;
+  end;
 end;
 
 function UTF8Length(const s: string): PtrInt;
@@ -403,6 +450,63 @@ begin
   end;
 end;
 
+function UTF8LengthFast(const s: string): PtrInt;
+begin
+  Result := UTF8LengthFast(PChar(s), Length(s));
+end;
+
+// Ported from:
+//  http://www.daemonology.net/blog/2008-06-05-faster-utf8-strlen.html
+// The code uses CPU's native data size. In a 64-bit CPU it means 8 bytes at once.
+function UTF8LengthFast(p: PChar; ByteCount: PtrInt): PtrInt;
+const
+  {$IfDef CPU64}
+  ONEMASK=$0101010101010101;
+  {$Else}
+  ONEMASK=$01010101;
+  {$EndIf}
+var
+  b: Byte;
+  pu: PPtrUInt;
+  pb: PByte absolute pu;
+  ui: PtrUInt absolute pu;
+  u: PtrUInt;
+  i: Integer;
+begin
+  pu := PPtrUInt(p);
+  Result := 0;
+  // Handle any initial misaligned bytes.
+  for i := 1 to ui and (sizeof(u) - 1) do
+  begin
+    b := pb^;
+    // Is this byte NOT the first byte of a character?
+    Result += (b shr 7) and ((not b) shr 6);
+    inc(pb);
+  end;
+  // Handle complete blocks.
+  for i := 1 to ByteCount div sizeof(u) do
+  begin
+    u := pu^;
+    // Result bytes which are NOT the first byte of a character.
+    u := ((u and (ONEMASK * $80)) shr 7) and ((not u) shr 6);
+    {$PUSH}{$Q-}  // "u * ONEMASK" causes an arithmetic overflow.
+    Result += (u * ONEMASK) >> ((sizeof(u) - 1) * 8);
+    {$POP}
+    inc(pu);
+  end;
+  // Take care of any left-over bytes.
+  for i := 1 to ({%H-}PtrUInt(p)+ByteCount) and (sizeof(u) - 1) do
+  begin
+    b :=  pb^;
+    {if (b = $00) then   // Exit if we hit a zero byte.
+      break;}
+    // Is this byte NOT the first byte of a character?
+    Result += (b shr 7) and ((not b) shr 6);
+    inc(pb);
+  end;
+  Result := ByteCount - Result;
+end;
+
 function UTF8CharacterToUnicode(p: PChar; out CharLen: integer): Cardinal;
 { if p=nil then CharLen=0 otherwise CharLen>0
   If there is an encoding error the Result is 0 and CharLen=1.
@@ -420,8 +524,7 @@ begin
       // starts with %110 => could be double byte character
       if (ord(p[1]) and %11000000) = %10000000 then begin
         CharLen:=2;
-        Result:=((ord(p^) and %00011111) shl 6)
-                or (ord(p[1]) and %00111111);
+        Result:=((ord(p^) and %00011111) shl 6) or (ord(p[1]) and %00111111);
         if Result<(1 shl 7) then begin
           // wrong encoded, could be an XSS attack
           Result:=0;
@@ -573,45 +676,80 @@ begin
   end;
 end;
 
-{ Find the start of the UTF8 character which contains BytePos,
-  Len is length in byte, BytePos starts at 0 }
-function UTF8FindNearestCharStart(UTF8Str: PChar; Len: SizeInt; BytePos: SizeInt
-  ): SizeInt;
+
+{ Tries to find the start of a valid UTF8 codepoint that contains the character pointed to by CurPos
+  - AString: pointer to the (start of the) string
+  - CurPos: pointer to the character inside AString that we want to get the information off
+    * if the function succeeds, CurPos wil point to the start of the valid UTF8 codepoint
+    * if the function fails, CurPos will not be changed
+    Note: if CurPos points beyond the end of AString you will get a crash!
+  - CharLen: the length of the UTF8 codepoint in bytes, if the function succeeds
+  - Returns:
+    True if the character pointed to by Curpos is part of a valid UTF8 codepoint (1 to 4 bytes),
+    otherwise it returns False.                                                                          }
+function Utf8TryFindCodepointStart(AString: PChar; var CurPos: PChar; out CharLen: Integer): Boolean;
+var
+  SavedPos: PChar;
 begin
-  Result:=0;
-  if (UTF8Str<>nil) and (Len>0) and (BytePos>=0) then begin
-    Result:=BytePos;
-    if Result>Len then Result:=Len-1;
-    if (Result>0) and (ord(UTF8Str[Result]) and %11000000=%10000000) then begin
-      dec(Result);
-      if (Result>0) and (ord(UTF8Str[Result]) and %11000000=%10000000) then begin
-        dec(Result);
-        if (Result>0) and (ord(UTF8Str[Result]) and %11000000=%10000000) then begin
-          dec(Result);
-          // should be four byte character
-          if (ord(UTF8Str[Result]) and %11111000<>%11110000) then begin
-            // broken UTF8 character
-            inc(Result,3);
-          end else begin
-            // is four byte character
-          end;
-        end else if (ord(UTF8Str[Result]) and %11110000<>%11100000) then begin
-          // broken UTF8 character, should be three byte
-          inc(Result,2);
-        end else
-        begin
-          // is three byte character
-        end;
-      end else if (ord(UTF8Str[Result]) and %11100000<>%11000000) then begin
-        // broken UTF8 character, should be two byte
-        inc(Result);
-      end else
+  Result := False;
+  CharLen := 0;
+  if (not (Assigned(AString) and Assigned(CurPos)))
+      or (CurPos < AString) then Exit;
+  SavedPos := CurPos;
+  //Note: UTF8CharacterStrictLength will NOT "look" beyond the terminating #0 of a PChar, so this is safe with AnsiStrings
+  CharLen := UTF8CharacterStrictLength(CurPos);
+  if (CharLen > 0) then Exit(True);
+  if (CurPos > AString) then
+  begin
+    Dec(CurPos);   //-1
+    //is it second byte of 2..4 byte codepoint?
+    CharLen := UTF8CharacterStrictLength(CurPos);
+    if (CharLen > 1) then Exit(True);
+    if (CurPos > AString) then
+    begin
+      Dec(CurPos);   //-2
+      //is it third byte of 3..4 byte codepoint?
+      CharLen := UTF8CharacterStrictLength(CurPos);
+      if (CharLen > 2) then Exit(True);
+      if (CurPos > AString) then
       begin
-        // is two byte character
+        Dec(CurPos);   //-3
+       //is it fouth byte of 4 byte codepoint?
+       CharLen := UTF8CharacterStrictLength(CurPos);
+       if (CharLen = 4) then Exit(True);
       end;
     end;
   end;
+  //At this point we failed: we are NOT inside a valid UTF8 codepoint!
+  CurPos := SavedPos;
 end;
+
+function Utf8TryFindCodepointStart(const AString: String; var Index: Integer; out CharLen: Integer): Boolean;
+var
+  CurPos, SavedCurPos: PChar;
+begin
+  CurPos := @AString[Index];
+  SavedCurPos := CurPos;
+  Result := Utf8TryFindCodepointStart(PChar(AString), CurPos, CharLen);
+  Index := Index - (SavedCurPos - CurPos);
+end;
+
+{ Find the start of the UTF8 character which contains BytePos,
+  if BytePos is not part of a valid Utf8 Codepoint the function returns BytePos
+  Len is length in byte, BytePos starts at 0 }
+function UTF8FindNearestCharStart(UTF8Str: PChar; Len: SizeInt; BytePos: SizeInt): SizeInt;
+var
+  CurPos: PChar;
+  CharLen: Integer;
+begin
+  if (BytePos > Len-1) then BytePos := Len - 1;
+  CurPos := Utf8Str + BytePos;
+  //No need to check the result value, since when it retuns False CurPos will be reset
+  //to it's original value, and that's what we want to return in that case
+  Utf8TryFindCodepointStart(Utf8Str, CurPos, CharLen);
+  Result := CurPos - Utf8Str;
+end;
+
 
 { Len is the length in bytes of UTF8Str
   CharIndex is the position of the desired char (starting at 0), in chars
@@ -889,6 +1027,26 @@ begin
   end;
 end;
 
+{$IFnDEF NO_CP_RTL}
+procedure UTF8Delete(var s: Utf8String; StartCharIndex, CharCount: PtrInt);
+var
+  tmp: String;
+begin
+  tmp := RawByteString(s);
+  {.$IFDEF ACP_RTL}
+  { change code page without converting the data }
+  SetCodePage(RawByteString(tmp), CP_UTF8, False);
+  {.$ENDIF}
+  { keep refcount to 1 if it was 1, to avoid unnecessary copies }
+  s := '';
+  UTF8Delete(tmp,StartCharIndex,CharCount);
+  { same as above }
+  s := RawByteString(tmp);
+  tmp := '';
+  SetCodePage(RawByteString(s), CP_UTF8, False);
+end;
+{$ENDIF NO_ACP_RTL}
+
 procedure UTF8Delete(var s: String; StartCharIndex, CharCount: PtrInt);
 var
   StartBytePos: PChar;
@@ -907,7 +1065,20 @@ begin
   end;
 end;
 
-procedure UTF8Insert(const source: String; var s: string; StartCharIndex: PtrInt);
+{$IFnDEF NO_CP_RTL}
+{It's simper to copy the code from the variant with String parameters than writing a wrapper}
+procedure UTF8Insert(const source: UTF8String; var s: UTF8string;
+  StartCharIndex: PtrInt);
+var
+  StartBytePos: PChar;
+begin
+  StartBytePos:=UTF8CharStart(PChar(s),length(s),StartCharIndex-1);
+  if StartBytePos <> nil then
+    Insert(source, s, StartBytePos-PChar(s)+1);
+end;
+{$ENDIF NO_CP_RTL}
+
+procedure UTF8Insert(const source: String; var s: String; StartCharIndex: PtrInt);
 var
   StartBytePos: PChar;
 begin
@@ -2007,7 +2178,7 @@ begin
             case c3 of
             #$A2: OutStr^ := #$AB;
             #$A4: OutStr^ := #$BD;
-            #$AD: OutStr^ := #$90;
+            #$AD: OutStr^ := #$91;
             #$AE: OutStr^ := #$B1;
             #$AF: OutStr^ := #$90;
             #$B0: OutStr^ := #$92;
@@ -2772,6 +2943,70 @@ begin
   Result+=copy(S,CopyPos-PChar(S)+1,p-CopyPos)+Quote;
 end;
 
+function Utf8StartsText(const ASubText, AText: string): Boolean;
+var
+  TextLen, SubTextLen: PtrInt;
+begin
+  Result := False;
+  if (ASubText <> '') then
+  begin
+    TextLen := Utf8Length(AText);
+    SubTextLen := Utf8Length(ASubText);
+    if (TextLen >= SubTextLen) then
+      Result := (Utf8CompareText(Utf8Copy(AText,1,SubTextLen),ASubText) = 0);
+  end;
+end;
+
+function Utf8EndsText(const ASubText, AText: string): Boolean;
+var
+  TextLen, SubTextLen: PtrInt;
+begin
+  Result := False;
+  if (ASubText <> '') then
+  begin
+    TextLen := Utf8Length(AText);
+    SubTextLen := Utf8Length(ASubText);
+    if (TextLen >= SubTextLen) then
+      Result := (Utf8CompareText(Utf8Copy(AText,TextLen-SubTextLen+1,SubTextLen),ASubText) = 0);
+  end;
+end;
+
+function Utf8ReverseString(p: PChar; const ByteCount: LongInt): string;
+var
+  CharLen, rBytePos: LongInt;
+begin
+  SetLength(Result, ByteCount);
+  rBytePos := ByteCount + 1;
+  while (rBytePos > 1) do
+  begin
+    CharLen:=UTF8CharacterLength(p);
+    Dec(rBytePos, CharLen);
+    System.Move(p^, Result[rBytePos], CharLen);
+    Inc(p, CharLen);
+  end;
+end;
+
+function Utf8ReverseString(const AText: string): string; inline;
+begin
+  Result := UTF8ReverseString(PChar(AText), length(AText));
+end;
+
+function Utf8RPos(const Substr, Source: string): integer;
+var
+  RevSubstr, RevSource: string;
+  pRev: integer;
+begin
+  if (Pos(Substr, Source) = 0) then
+    Result := 0
+  else
+  begin
+    RevSubstr := UTF8ReverseString(Substr);
+    RevSource := UTF8ReverseString(Source);
+    pRev := UTF8Pos(RevSubstr, RevSource);
+    Result := UTF8Length(Source) -pRev -UTF8Length(Substr) +2;
+  end;
+end;
+
 function UTF8WrapText(S, BreakStr :string; BreakChars :TSysCharSet; MaxCol: integer): string;
 var
   P :PChar;
@@ -2949,15 +3184,25 @@ end;
 
 {------------------------------------------------------------------------------
   Name:    UTF8CompareStr
-  Params: S1, S2 - UTF8 encoded strings
-  Returns: < 0 if S1 < S2, 0 if S1 = S2, > 0 if S1 > S2.
+  Params:  S1, S2 - UTF8 encoded strings
+  Compares UTF8 encoded strings
+  Returns
+     0: if S1 = S2
+    -1: if S1 < S2 ("alphabetically")
+    +1: if S1 > S2
+    -2: if S1 < S2, comparison ended at a different byte in an invalid UTF8 codepoint in either S1 or S2 (byte at S1 > byte at S2)
+    +2: if S1 > S2, comparison ended at a different byte in an invalid UTF8 codepoint in either S1 or S2
+
   Compare two UTF8 encoded strings, case sensitive.
-  Internally it uses CompareMemRange, which returns -1 if a byte of S1 is lower than S2.
- ------------------------------------------------------------------------------}
+
+  Internally it uses WideCompareStr on the first Utf8 codepoint that differs between S1 and S2
+  and therefor has proper colation on platforms where the WidestringManager supports this
+  (Windows, *nix with cwstring unit)
+------------------------------------------------------------------------------}
 function UTF8CompareStr(const S1, S2: string): PtrInt;
 begin
   Result := UTF8CompareStr(PChar(Pointer(S1)),length(S1),
-                            PChar(Pointer(S2)),length(S2));
+                           PChar(Pointer(S2)),length(S2));
 end;
 
 function UTF8CompareStrP(S1, S2: PChar): PtrInt;
@@ -2965,24 +3210,68 @@ begin
   Result:=UTF8CompareStr(S1,StrLen(S1),S2,StrLen(S2));
 end;
 
-function UTF8CompareStr(S1: PChar; Count1: SizeInt; S2: PChar; Count2: SizeInt
-  ): PtrInt;
+
+function UTF8CompareStr(S1: PChar; Count1: SizeInt; S2: PChar; Count2: SizeInt): PtrInt;
 var
   Count: SizeInt;
+  i, CL1, CL2: Integer;
+  B1, B2: Byte;
+  W1, W2: WideString;
+  Org1, Org2: PChar;
 begin
   Result := 0;
-  if Count1>Count2 then
-    Count:=Count2
+  Org1 := S1;
+  Org2 := S2;
+  if (Count1 > Count2) then
+    Count := Count2
   else
-    Count:=Count1;
-  Result := CompareMemRange(Pointer(S1),Pointer(S2), Count); // Note: CompareMemRange can handle nil if Count=0
-  if Result<>0 then exit;
-  if Count1>Count2 then
-    Result:=1
-  else if Count1<Count2 then
-    Result:=-1
+    Count := Count1;
+
+  i := 0;
+  if (Count > 0) then
+  begin
+   //unfortunately we cannot use CompareByte here, so we have to iterate ourselves
+    while (i < Count) do
+    begin
+      B1 := byte(S1^);
+      B2 := byte(S2^);
+      if (B1 <> B2) then
+      begin
+        //writeln('UCS: B1=',IntToHex(B1,2),', B2=',IntToHex(B2,2));
+        Break;
+      end;
+      Inc(S1); Inc(S2); Inc(I);
+    end;
+  end;
+  if (i < Count) then
+  begin
+    //Fallback result
+    Result := B1 - B2;
+    if (Result < 0) then
+      Result := -2
+    else
+      Result := 2;
+    //writeln('UCS: FallBack Result = ',Result);
+    //Try t find start of valid UTF8 codepoints
+    if (not Utf8TryFindCodepointStart(Org1, S1, CL1)) or
+        not Utf8TryFindCodepointStart(Org2, S2, CL2) then
+      Exit;
+
+    //writeln('UCS: CL1=',CL1,', CL2=',CL2);
+    //writeln('S1 = "',S1,'"');
+    //writeln('S2 = "',S2,'"');
+    W1 := Utf8ToUtf16(S1, CL1);
+    W2 := Utf8ToUtf16(S2, CL2);
+    //writeln('UCS: W1 = ',Word(W1[1]),' W2 = ',Word(W2[1]));
+    Result := WideCompareStr(W1, W2);
+  end
   else
-    Result:=0;
+    //Strings are the same up and until size of smallest one
+    Result := Count1 - Count2;
+  if (Result > 1) then
+    Result := 1
+  else if (Result < -1) then
+    Result := -1;
 end;
 
 {------------------------------------------------------------------------------
@@ -2992,23 +3281,20 @@ end;
   Compare two UTF8 encoded strings, case insensitive.
   Note: Use this function instead of AnsiCompareText.
   This function guarantees proper collation on all supported platforms.
-  Internally it uses UTF8CompareStr.
+  Internally it uses WideCompareText.
  ------------------------------------------------------------------------------}
-function UTF8CompareText(const S1, S2: string): PtrInt;
-var
-  S1Lower, S2Lower: string;
-begin
-  S1Lower := UTF8LowerCase(S1);
-  S2Lower := UTF8LowerCase(S2);
-  Result := UTF8CompareStr(S1Lower, S2Lower);
-end;
+ function UTF8CompareText(const S1, S2: String): PtrInt;
+ begin
+   Result := WideCompareText(Utf8ToUtf16(S1),Utf8ToUtf16(S2));
+ end;
 
-function UTF8CompareStrCollated(const S1, S2: string): PtrInt;
+function UTF8CompareStrCollated(const S1, S2: string): PtrInt; {$IFnDEF ACP_RTL}inline;{$endif}
 begin
-  {$IFDEF MSWINDOWS}
+  {$IFDEF ACP_RTL}
+    //Only with this define AnsiCompareStr does not point to Utf8CompareStr
     Result := AnsiCompareStr(UTF8ToSys(S1), UTF8ToSys(S2));
   {$ELSE}
-    Result := WideCompareStr(WideString(S1),WideString(S2));
+    Result := Utf8CompareStr(S1,S2);
   {$ENDIF}
 end;
 

@@ -25,9 +25,8 @@ unit codetools_codecreation_options;
 interface
 
 uses
-  Classes, SysUtils, FileUtil, Forms, ExtCtrls, StdCtrls, Dialogs,
-  SourceChanger, CodeToolsOptions, LazarusIDEStrConsts, IDEOptionsIntf,
-  IDEDialogs;
+  Classes, SysUtils, FileUtil, Forms, ExtCtrls, StdCtrls, Dialogs, EditBtn,
+  SourceChanger, CodeToolsOptions, LazarusIDEStrConsts, IDEOptionsIntf;
 
 type
 
@@ -35,19 +34,15 @@ type
 
   TCodetoolsCodeCreationOptionsFrame = class(TAbstractIDEOptionsEditor)
     ForwardProcsInsertPolicyComboBox: TComboBox;
+    TemplateFileEdit: TFileNameEdit;
     UsesInsertPolicyComboBox: TComboBox;
     ForwardProcsKeepOrderCheckBox: TCheckBox;
     ForwardProcsInsertPolicyLabel: TLabel;
-    EventMethodSectionComboBox: TComboBox;
     UsesInsertPolicyLabel: TLabel;
-    TemplateFileBrowseButton: TButton;
-    TemplateFileEdit: TEdit;
     TemplateFileLabel: TLabel;
     UpdateMultiProcSignaturesCheckBox: TCheckBox;
     UpdateOtherProcSignaturesCaseCheckBox: TCheckBox;
     GroupLocalVariablesCheckBox: TCheckBox;
-    EventMethodSectionLabel: TLabel;
-    procedure TemplateFileBrowseButtonClick(Sender: TObject);
   private
   public
     function GetTitle: String; override;
@@ -62,26 +57,6 @@ implementation
 {$R *.lfm}
 
 { TCodetoolsCodeCreationOptionsFrame }
-
-procedure TCodetoolsCodeCreationOptionsFrame.TemplateFileBrowseButtonClick(
-  Sender: TObject);
-var
-  OpenDialog: TOpenDialog;
-begin
-  OpenDialog:=TOpenDialog.Create(nil);
-  try
-    InitIDEFileDialog(OpenDialog);
-    OpenDialog.Title:=lisChooseAFileWithCodeToolsTemplates;
-    OpenDialog.Options:=OpenDialog.Options+[ofFileMustExist];
-    OpenDialog.Filter:=dlgFilterCodetoolsTemplateFile+' (*.xml)|*.xml|'+dlgFilterAll+
-      '|'+GetAllFilesMask;
-    if OpenDialog.Execute then
-      TemplateFileEdit.Text:=OpenDialog.FileName;
-  finally
-    StoreIDEFileDialog(OpenDialog);
-    OpenDialog.Free;
-  end;
-end;
 
 function TCodetoolsCodeCreationOptionsFrame.GetTitle: String;
 begin
@@ -117,20 +92,6 @@ begin
     end;
   end;
 
-  EventMethodSectionLabel.Caption:=lisEventMethodSectionLabel;
-  with EventMethodSectionComboBox do begin
-    Assert(Ord(High(TInsertClassSectionResult)) = 3,  'TCodetoolsCodeCreationOptionsFrame.Setup: High(TInsertClassSectionResult) <> 3');
-    with Items do begin
-      BeginUpdate;
-      Add(lisPrivate);
-      Add(lisProtected);
-      Add(lisEMDPublic);
-      Add(lisEMDPublished);
-      Add(dlgEnvAsk);
-      EndUpdate;
-    end;
-  end;
-
   UpdateMultiProcSignaturesCheckBox.Caption:=
     lisCTOUpdateMultipleProcedureSignatures;
   UpdateOtherProcSignaturesCaseCheckBox.Caption:=
@@ -142,8 +103,11 @@ begin
   {$IFNDEF EnableCodeCompleteTemplates}
   TemplateFileLabel.Enabled:=false;
   TemplateFileEdit.Enabled:=false;
-  TemplateFileBrowseButton.Enabled:=false;
   {$ENDIF}
+
+  TemplateFileEdit.DialogTitle:=lisChooseAFileWithCodeToolsTemplates;
+  TemplateFileEdit.Filter:=dlgFilterCodetoolsTemplateFile+' (*.xml)|*.xml|'+
+    dlgFilterAll+'|'+GetAllFilesMask;
 end;
 
 procedure TCodetoolsCodeCreationOptionsFrame.ReadSettings(
@@ -170,7 +134,6 @@ begin
       //uipAlphabetically:
                           UsesInsertPolicyComboBox.ItemIndex:=4;
     end;
-    EventMethodSectionComboBox.ItemIndex := Ord(EventMethodSection);
 
     UpdateMultiProcSignaturesCheckBox.Checked:=UpdateMultiProcSignatures;
     UpdateOtherProcSignaturesCaseCheckBox.Checked:=UpdateOtherProcSignaturesCase;
@@ -200,8 +163,6 @@ begin
     3: UsesInsertPolicy:=uipLast;
     else UsesInsertPolicy:=uipAlphabetically;
     end;
-
-    EventMethodSection := TInsertClassSection(EventMethodSectionComboBox.ItemIndex);
 
     UpdateMultiProcSignatures:=UpdateMultiProcSignaturesCheckBox.Checked;
     UpdateOtherProcSignaturesCase:=UpdateOtherProcSignaturesCaseCheckBox.Checked;

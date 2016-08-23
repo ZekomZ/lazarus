@@ -4,6 +4,7 @@
 
 unit alllclunits;
 
+{$warn 5023 off : no warning about unused units}
 interface
 
 uses
@@ -27,7 +28,7 @@ uses
   CustomDrawnControls, CustomDrawnDrawers, LazDeviceApis, LDockTree, 
   LazFreeTypeIntfDrawer, CustomDrawn_WinXP, CustomDrawn_Android, Arrow, 
   EditBtn, ComboEx, DBExtCtrls, CustomDrawn_Mac, CalcForm, LCLTranslator, 
-  LazarusPackageIntf;
+  GroupedEdit, LazarusPackageIntf;
 
 implementation
 

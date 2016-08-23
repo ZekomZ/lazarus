@@ -388,7 +388,7 @@ begin
     DoDataFunction:=ADataFunction;
   end;
   inc(FCount);
-  if (AKeyWord='') or not IsValidIdent(AKeyWord) then
+  if not IsValidIdent(AKeyWord) then
     FHasOnlyIdentifiers:=false;
 end;
 
@@ -1245,7 +1245,10 @@ begin
     Add('SETLENGTH'   ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('INC'         ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('DEC'         ,{$ifdef FPC}@{$endif}AllwaysTrue);
+    Add('DEFAULT'     ,{$ifdef FPC}@{$endif}AllwaysTrue);
+    Add('DELETE'      ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('INITIALIZE'  ,{$ifdef FPC}@{$endif}AllwaysTrue);
+    Add('INSERT'      ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('FINALIZE'    ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('COPY'        ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('SIZEOF'      ,{$ifdef FPC}@{$endif}AllwaysTrue);
@@ -1719,7 +1722,7 @@ begin
     Add('NIL'        ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('ORD'        ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('POINTER'    ,{$ifdef FPC}@{$endif}AllwaysTrue);
-    Add('PREC'       ,{$ifdef FPC}@{$endif}AllwaysTrue);
+    Add('PRED'       ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('QWORD'      ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('REAL'       ,{$ifdef FPC}@{$endif}AllwaysTrue);
     Add('SHORTSTRING',{$ifdef FPC}@{$endif}AllwaysTrue);

@@ -60,9 +60,10 @@ type
     procedure ChooseSchemeButtonClick(Sender: TObject);
     procedure ClearButtonClick(Sender: TObject);
     procedure FilterEditAfterFilter(Sender: TObject);
-    function FilterEditFilterItem(Item: TObject; out Done: Boolean): Boolean;
+    function FilterEditFilterItem(ItemData: Pointer; out Done: Boolean): Boolean;
     procedure FilterEditKeyPress(Sender: TObject; var {%H-}Key: char);
     procedure FindKeyButtonClick(Sender: TObject);
+    procedure KeyMapSplitterMoved(Sender: TObject);
     procedure OnIdle(Sender: TObject; var {%H-}Done: Boolean);
     procedure ResetKeyFilterBtnClick(Sender: TObject);
     procedure TreeViewDblClick(Sender: TObject);
@@ -221,17 +222,19 @@ begin
   ClearCommandMapping(TreeView.Selected)
 end;
 
-function TEditorKeymappingOptionsFrame.FilterEditFilterItem(Item: TObject; out Done: Boolean): Boolean;
+function TEditorKeymappingOptionsFrame.FilterEditFilterItem(ItemData: Pointer;
+  out Done: Boolean): Boolean;
 var
   KeyRel: TKeyCommandRelation;
 begin
   Done:=True;
   Result:=False;
-  if Item is TKeyCommandRelation then begin
-    KeyRel:=TKeyCommandRelation(Item);        // Tree item is actual key command.
+  if TObject(ItemData) is TKeyCommandRelation then
+  begin
+    KeyRel:=TKeyCommandRelation(ItemData);      // Tree item is actual key command.
     Done:=False;
     Result:=KeyMapKeyFilter.Key1<>VK_UNKNOWN;
-    if Result then begin                      // Key filter is defined
+    if Result then begin                        // Key filter is defined.
       Done:=True;
       Result:=(CompareIDEShortCutKey1s(@KeyMapKeyFilter,@KeyRel.ShortcutA)=0)
            or (CompareIDEShortCutKey1s(@KeyMapKeyFilter,@KeyRel.ShortcutB)=0);
@@ -263,6 +266,12 @@ begin
   finally
     ShortCutDialog.Free;
   end;
+end;
+
+procedure TEditorKeymappingOptionsFrame.KeyMapSplitterMoved(Sender: TObject);
+begin
+  TreeView.Update;
+  ConflictsTreeView.Update;
 end;
 
 procedure TEditorKeymappingOptionsFrame.OnIdle(Sender: TObject;
@@ -488,12 +497,6 @@ function TEditorKeymappingOptionsFrame.KeyMappingRelationToCaption(
   KeyRelation: TKeyCommandRelation): String;
 const
   MaxLength = 60;
-
-  function AddBrakets(S: String): String;
-  begin
-    Result := '[' + S + ']';
-  end;
-
 begin
   with KeyRelation do
   begin
@@ -502,18 +505,7 @@ begin
       Result := UTF8Copy(LocalizedName, 1, MaxLength)+'...';
     if Result <> '' then
       Result := Result + '  ';
-    if (ShortcutA.Key1 = VK_UNKNOWN) and (ShortcutB.Key1 = VK_UNKNOWN) then
-      Result := Result{ + lisNone2 }
-    else
-    if (ShortcutA.Key1 = VK_UNKNOWN) then
-      Result := Result + AddBrakets(KeyAndShiftStateToEditorKeyString(ShortcutB))
-    else
-    if (ShortcutB.Key1 = VK_UNKNOWN) then
-      Result := Result + AddBrakets(KeyAndShiftStateToEditorKeyString(ShortcutA))
-    else
-      Result := Result + AddBrakets(KeyAndShiftStateToEditorKeyString(ShortcutA))
-                       + '  '+lisOr+'  ' +
-                         AddBrakets(KeyAndShiftStateToEditorKeyString(ShortcutB));
+    Result := Result + KeyValuesToCaptionStr(ShortcutA, ShortcutB, '[');
   end;
 end;
 

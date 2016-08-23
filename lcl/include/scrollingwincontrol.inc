@@ -115,8 +115,15 @@ begin
   if NeededClientH>0 then
     NeededClientH-=FrameHeight;
 
-  HorzScrollBar.InternalSetRange(NeededClientW);
-  VertScrollBar.InternalSetRange(NeededClientH);
+  if HorzScrollBar.Visible then
+    HorzScrollBar.InternalSetRange(NeededClientW)
+  else
+    HorzScrollBar.InternalSetRange(0);
+
+  if VertScrollBar.Visible then
+    VertScrollBar.InternalSetRange(NeededClientH)
+  else
+    VertScrollBar.InternalSetRange(0);
 end;
 
 class function TScrollingWinControl.GetControlClassDefaultSize: TSize;
@@ -161,23 +168,6 @@ begin
 end;
 
 procedure TScrollingWinControl.ComputeScrollbars;
-// true if something has changed
-// update Page, AutoRange
-
-  {procedure trav(aControl: TControl; Prefix: string);
-  var
-    w: integer;
-    h: integer;
-    i: Integer;
-  begin
-    if not aControl.IsVisible then exit;
-    aControl.GetPreferredSize(w,h,true,true);
-    debugln([Prefix,'W ',DbgSName(aControl),' ',dbgs(aControl.BoundsRect),' Pref=',w,'x',h]);
-    if aControl is TWinControl then
-      for i:=0 to TWinControl(aControl).ControlCount-1 do
-        trav(TWinControl(aControl).Controls[i],Prefix+'  ');
-  end;}
-
   procedure UpdateBar(aBar: TControlScrollBar; aClientSize: integer);
   begin
     // page (must be smaller than Range but at least 1)
@@ -197,7 +187,7 @@ begin
   ClientW:=VertScrollBar.ClientSizeWithoutBar;
   ClientH:=HorzScrollBar.ClientSizeWithoutBar;
   {$IFDEF VerboseScrollingWinControl}
-  debugln(['TScrollingWinControl.ComputeScrollbars ',DbgSName(Self),' Bounds=',dbgs(BoundsRect),' ClientRect=',dbgs(ClientRect),' ClientRectNoScrollBars=',ClientW,'x',ClientH,' Needed=',NeededClientW,'x',NeededClientH]);
+  debugln(['TScrollingWinControl.ComputeScrollbars ',DbgSName(Self),' Bounds=',dbgs(BoundsRect),' ClientRect=',dbgs(ClientRect),' ClientRectNoScrollBars=',ClientW,'x',ClientH]);
   {$ENDIF}
 
   if VertScrollBar.Range > ClientH then
@@ -248,22 +238,33 @@ end;
 
 procedure TScrollingWinControl.ScrollBy(DeltaX, DeltaY: Integer);
 begin
-  if HandleAllocated and IsWindowVisible(Handle) then
-  begin
-    TWSScrollingWinControlClass(WidgetSetClass).ScrollBy(Self, DeltaX, DeltaY);
-    //Invalidate;
-  end
-  else
-    inherited ScrollBy(DeltaX, DeltaY);
+  ScrollBy_WS(DeltaX, DeltaY);
 end;
 
-procedure TScrollingWinControl.ScrollbarHandler(ScrollKind: TScrollBarKind;
-  OldPosition: Integer);
+procedure TScrollingWinControl.ScrollInView(AControl: TControl);
+var
+  xRect: TRect;
 begin
-  if ScrollKind = sbVertical then
-    ScrollBy(0, OldPosition - FVertScrollBar.Position)
-  else
-    ScrollBy(OldPosition - FHorzScrollBar.Position, 0);
+  if AControl=nil then
+    Exit;
+  xRect := AControl.BoundsRect;
+  OffsetRect(xRect, -HorzScrollBar.Position, -VertScrollBar.Position);
+  if xRect.Left < 0 then
+    HorzScrollBar.Position := HorzScrollBar.Position + xRect.Left
+  else if xRect.Right > ClientWidth then
+  begin
+    if xRect.Right - xRect.Left > ClientWidth then
+      xRect.Right := xRect.Left + ClientWidth;
+    HorzScrollBar.Position := HorzScrollBar.Position + xRect.Right - ClientWidth;
+  end;
+  if xRect.Top < 0 then
+    VertScrollBar.Position := VertScrollBar.Position + xRect.Top
+  else if xRect.Bottom > ClientHeight then
+  begin
+    if xRect.Bottom - xRect.Top > ClientHeight then
+      xRect.Bottom := xRect.Top + ClientHeight;
+    VertScrollBar.Position := VertScrollBar.Position + xRect.Bottom - ClientHeight;
+  end;
 end;
 
 procedure TScrollingWinControl.Loaded;

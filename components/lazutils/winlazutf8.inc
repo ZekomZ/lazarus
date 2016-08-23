@@ -7,7 +7,7 @@ var
 var
   ArgsW: Array of WideString;
   ArgsWCount: Integer; // length(ArgsW)+1
-  {$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
+  {$IF DEFINED(UTF8_RTL) AND NOT DEFINED(WINCE)}
   ArgsUTF8: Array of String; // the ArgsW array as UTF8
   OldArgV: PPChar = nil;
   {$IFEND}
@@ -37,20 +37,22 @@ end;
 
 //*************** START WideString impementations
 
-//fpc 2.6.0 does not have StrLen for WideChar.
-//Remove this when we have 2.6.4 or higher
-{$if FPC_FULLVERSION < 20602}
-function StrLen(PW: PWideChar): SizeInt; overload;
+
+{$IF DEFINED(UTF8_RTL) AND NOT DEFINED(WINCE)}
+procedure SetupArgvAsUtf8;
 var
-  i: SizeInt;
+  i: Integer;
 begin
-  i:=0;
-  if assigned(PW) then
-    while (PW[i] <> #0) do inc(i);
-  Result := i;
+  SetLength(ArgsUTF8,length(ArgsW));
+  OldArgV:=argv;
+  GetMem(argv,SizeOf(Pointer)*length(ArgsW));
+  for i:=0 to length(ArgsW)-1 do
+  begin
+    ArgsUTF8[i]:=ArgsW{%H-}[i];
+    argv[i]:=PChar(ArgsUTF8[i]);
+  end;
 end;
 {$endif}
-
 
 procedure SetupCommandlineParametersWide;
 var
@@ -187,18 +189,12 @@ begin
 
   end;
   Dec(ArgsWCount);
-
-  {$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
-  if DefaultSystemCodePage=CP_UTF8 then begin
-    SetLength(ArgsUTF8,length(ArgsW));
-    OldArgV:=argv;
-    GetMem(argv,SizeOf(Pointer)*length(ArgsW));
-    for i:=0 to length(ArgsW)-1 do
-    begin
-      ArgsUTF8[i]:=ArgsW{%H-}[i];
-      argv[i]:=PChar(ArgsUTF8[i]);
-    end;
-  end;
+  //Note:
+  //On WinCe Argsv is a static function, so we cannot change it.
+  //This might change in the future if Argsv on WinCE will be declared as a function variable
+  {$IF DEFINED(UTF8_RTL) AND NOT DEFINED(WINCE)}
+  if DefaultSystemCodePage=CP_UTF8 then
+    SetupArgvAsUtf8;
   {$IFEND}
 end;
 
@@ -212,7 +208,11 @@ begin
   else
   begin
     if (Param <= ArgsWCount) then
+      {$IFDEF ACP_RTL}
+      Result := String(UnicodeString(ArgsW[Param]))
+      {$ELSE}
       Result := Utf8Encode(ArgsW[Param])
+      {$ENDIF ACP_RTL}
     else
       Result := '';
   end;
@@ -237,7 +237,7 @@ begin
   else
     Result := s;
   FreeMem(Dst);
-  Result := SysToUTF8(Result);
+  Result := WinCPToUTF8(Result);
   {$endif}
 end;
 
@@ -249,23 +249,33 @@ var
 begin
   {$ifdef WinCE}
   Result := UTF8ToSys(s);
-  {$else}
-  Result := UTF8ToSys(s);
+  {$else WinCE}
+  {$ifndef NO_CP_RTL}
+  Result := UTF8ToWinCP(s);
+  {$else NO_CP_RTL}
+  Result := UTF8ToSys(s); // Kept for compatibility
+  {$endif NO_CP_RTL}
   Dst := AllocMem((Length(Result) + 1) * SizeOf(Char));
   if CharToOEM(PChar(Result), Dst) then
     Result := StrPas(Dst);
   FreeMem(Dst);
-  {$endif}
+  {$ifndef NO_CP_RTL}
+  SetCodePage(RawByteString(Result), CP_OEMCP, False);
+  {$endif NO_CP_RTL}
+  {$endif WinCE}
 end;
 
-{$IFDEF MSWindows}
+{$IFDEF Windows}
 // for all Windows supporting 8bit codepages (e.g. not WinCE)
-function WinCPToUTF8(const s: string): string;
+function WinCPToUTF8(const s: string): string; {$ifdef WinCe}inline;{$endif}
 // result has codepage CP_ACP
 var
   UTF16WordCnt: SizeInt;
   UTF16Str: UnicodeString;
 begin
+  {$ifdef WinCE}
+  Result := SysToUtf8(s);
+  {$else}
   Result:=s;
   if IsASCII(Result) then begin
     {$ifdef FPC_HAS_CPSTRING}
@@ -286,14 +296,18 @@ begin
     SetCodePage(RawByteString(Result), CP_ACP, False);
     {$endif}
   end;
+  {$endif}
 end;
 
-function UTF8ToWinCP(const s: string): string;
+function UTF8ToWinCP(const s: string): string; {$ifdef WinCe}inline;{$endif}
 // result has codepage CP_ACP
 var
   src: UnicodeString;
   len: LongInt;
 begin
+  {$ifdef WinCE}
+  Result := Utf8ToSys(s);
+  {$else}
   Result:=s;
   if IsASCII(Result) then begin
     {$ifdef FPC_HAS_CPSTRING}
@@ -314,6 +328,7 @@ begin
     SetCodePage(RawByteString(Result), CP_ACP, False);
     {$endif}
   end;
+  {$endif}
 end;
 {$ENDIF}
 
@@ -331,7 +346,6 @@ begin
 end;
 {$endif}
 
-{$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
 function GetLocaleStr(aLocaleID, aLCType: Longint; const Def: string): String;
 var
   L: Integer;
@@ -341,7 +355,11 @@ begin
   if L > 0 then
   begin
     Result:='';
+    {$IF FPC_FULLVERSION >= 30000}
     widestringmanager.Wide2AnsiMoveProc(PWideChar(@Buf[0]),Result,CP_UTF8,L-1);
+    {$ELSE}
+    widestringmanager.Wide2AnsiMoveProc(PWideChar(@Buf[0]),Result,CP_UTF8);
+    {$ENDIF}
   end
   else
     Result := Def;
@@ -349,44 +367,61 @@ end;
 
 function GetLocaleCharUTF8(aLocaleID, aLCType: Longint; Def: Char): Char;
 var
-  Buf: array[0..3] of Char; // sdate allows 4 chars.
+  Buf: array[0..3] of WideChar; // sdate allows 4 chars (3+ending #0)
+  GLI, I: LongInt;
+  WRes: WideChar;
 begin
-  if (GetLocaleInfoA(aLocaleID, aLCType, Buf, sizeof(buf)) > 0)
-  and (ord(Buf[0])<128) then
-    Result := Buf[0]
-  else begin
-    Result := Def;
-    case Buf[0] of
-    #$C2:
-      case Buf[1] of
-      #$A0: Result:=' '; // non breakable space
-      #$B7: Result:='.'; // middle stop
-      end;
-    #$CB:
-      if Buf[1]=#$99 then Result:=''''; // dot above, italian handwriting
-    #$D9:
-      case Buf[1] of
-      #$AB: Result:=','; // arabic decimal separator, persian thousand separator
-      #$AC: Result:=''''; // arabic thousand separator
-      end;
-    #$E2:
-      case Buf[1] of
-      #$80:
-        case Buf[2] of
-        #$82, // long space
-        #$83, // long space
-        #$89, // thin space
-        #$AF: // narrow non breakable space
-          Result := ' ';
-        #$94: Result := '-'; // persian decimal mark
-        end;
-      #$8E: if Buf[2]=#$96 then Result := ''''; // codepoint 9110 decimal separator
+  //Use Widestring Api so it works on WinCE as well
+  GLI := GetLocaleInfoW(aLocaleID, aLCType, Buf, Length(Buf)); // GLI is char count with the ending #0 char
+  if GLI > 2 then
+  begin // more than 1 char -> try to find first non-space character
+    for I := 0 to GLI-2 do
+    begin
+      WRes := Buf[I];
+      case Buf[I] of
+        #32, #$00A0, #$2002, #$2003, #$2009, #$202F: begin end;// go over spaces
+      else
+        Break; // stop at non-space
       end;
     end;
-  end;
+  end else
+  if GLI = 2 then // 1 char
+    WRes := Buf[0]
+  else
+    WRes := Def;
+
+  case WRes of
+    #0..#127: Result := WRes;// ASCII - OK
+    #$00A0: Result := ' ';   // non breakable space
+    #$00B7: Result := '.';   // middle stop
+    #$02D9: Result := '''';  // dot above, italian handwriting
+    #$066B: Result := ',';   // arabic decimal separator, persian thousand separator
+    #$066C: Result := '''';  // arabic thousand separator
+    #$2002: Result := ' ';   // long space
+    #$2003: Result := ' ';   // long space
+    #$2009: Result := ' ';   // thin space
+    #$202F: Result := ' ';   // narrow non breakable space
+    #$2014: Result := '-';   // persian decimal mark
+    #$2396: Result := '''';  // codepoint 9110 decimal separator
+    { Utf8        Utf16
+      C2 A0    -> 00A0
+      C2 B7    -> 00B7
+      CB 99    -> 02D9
+      D9 AB    -> 066B
+      D9 AC    -> 066C
+      E2 80 82 -> 2002
+      E2 80 83 -> 2003
+      E2 80 89 -> 2009
+      E2 80 AF -> 202F
+      E2 80 94 -> 2014
+      E2 8E 96 -> 2396
+    }
+  else // unicode character -> we need default ASCII char
+    Result := Def;
+  end;  //case
 end;
 
-procedure GetFormatSettingsUTF8(LCID: Integer; var aFormatSettings: TFormatSettings);
+procedure GetLocaleFormatSettingsUTF8(LCID: Integer; var aFormatSettings: TFormatSettings);
 var
   HF  : Shortstring;
   LID : Windows.LCID;
@@ -433,6 +468,16 @@ begin
   end;
 end;
 
+procedure GetFormatSettingsUTF8;
+begin
+  {$ifndef wince}
+  GetLocaleFormatSettingsUTF8(GetThreadLocale, FormatSettings);
+  {$else}
+  GetLocaleFormatSettingsUTF8(GetUserDefaultLCID, FormatSettings);
+  {$endif}
+end;
+
+{$IFDEF UTF8_RTL}
 function UTF8StrCompAnsiString(S1, S2: PChar): PtrInt;
 begin
   Result:=UTF8CompareStrP(S1,S2);
@@ -465,7 +510,7 @@ begin
   end else
     Result:=0;
 end;
-{$IFEND}
+{$ENDIF}
 
 procedure InitLazUtf8;
 begin
@@ -493,8 +538,8 @@ begin
       end;
     end;
   end;
-  {$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
-  GetFormatSettingsUTF8(GetThreadLocale,FormatSettings);
+  {$IFDEF UTF8_RTL}
+  GetFormatSettingsUTF8;
   widestringmanager.UpperAnsiStringProc:=@UTF8UpperString;
   widestringmanager.LowerAnsiStringProc:=@UTF8LowerString;
   widestringmanager.CompareStrAnsiStringProc:=@UTF8CompareStr;
@@ -510,12 +555,12 @@ begin
 end;
 
 procedure FinalizeLazUTF8;
-{$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
+{$IFDEF UTF8_RTL}
 var
   p: PPChar;
-{$IFEND}
+{$ENDIF}
 begin
-  {$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
+  {$IF DEFINED(UTF8_RTL) AND NOT DEFINED(WINCE)}
   // restore argv and free memory
   if OldArgV<>nil then
   begin

@@ -101,9 +101,11 @@ type
   TBasicChartTool = class(TIndexedComponent)
   strict protected
     FChart: TChart;
+    FStartMousePos: TPoint;
 
     procedure Activate; virtual;
     procedure Deactivate; virtual;
+    function PopupMenuConflict: Boolean; virtual;
   public
     property Chart: TChart read FChart;
   end;
@@ -268,6 +270,8 @@ type
     procedure VisitSources(
       AVisitor: TChartOnSourceVisitor; AAxis: TChartAxis; var AData);
   protected
+    FDisablePopupMenu: Boolean;
+    procedure DoContextPopup(MousePos: TPoint; var Handled: Boolean); override;
     function DoMouseWheel(
       AShift: TShiftState; AWheelDelta: Integer;
       AMousePos: TPoint): Boolean; override;
@@ -435,6 +439,7 @@ type
 
   published
     property OnClick;
+    property OnContextPopup;
     property OnDblClick;
     property OnDragDrop;
     property OnDragOver;
@@ -447,10 +452,11 @@ type
   end;
 
 procedure Register;
-procedure RegisterSeriesClass(ASeriesClass: TSeriesClass; const ACaption: string);
+procedure RegisterSeriesClass(ASeriesClass: TSeriesClass; const ACaption: String); overload;
+procedure RegisterSeriesClass(ASeriesClass: TSeriesClass; ACaptionPtr: PStr); overload;
 
 var
-  SeriesClassRegistry: TStringList;
+  SeriesClassRegistry: TClassRegistry = nil;
   OnInitBuiltinTools: function(AChart: TChart): TBasicChartToolset;
 
 implementation
@@ -458,8 +464,9 @@ implementation
 {$R tagraph.res}
 
 uses
-  Clipbrd, Dialogs, GraphMath, LCLProc, LResources, Math, TADrawerCanvas,
-  TAGeometry, TAMath, Types;
+  Clipbrd, Dialogs, GraphMath, LCLProc, LResources, Math, Types,
+  TADrawerCanvas, TAGeometry, TAMath, TAStyles,
+  TATools;  // needed to initialize OnInitBuiltinTools; added to avoid crash of converted Delphi projects
 
 function CompareZPosition(AItem1, AItem2: Pointer): Integer;
 begin
@@ -474,17 +481,22 @@ var
 begin
   RegisterComponents(CHART_COMPONENT_IDE_PAGE, [TChart]);
   for i := 0 to SeriesClassRegistry.Count - 1 do begin
-    sc := TSeriesClass(SeriesClassRegistry.Objects[i]);
+    sc := TSeriesClass(SeriesClassRegistry.GetClass(i));
     RegisterClass(sc);
     RegisterNoIcon([sc]);
   end;
 end;
 
-procedure RegisterSeriesClass(
-  ASeriesClass: TSeriesClass; const ACaption: String);
+procedure RegisterSeriesClass(ASeriesClass: TSeriesClass; const ACaption: String);
 begin
-  if SeriesClassRegistry.IndexOfObject(TObject(ASeriesClass)) < 0 then
-    SeriesClassRegistry.AddObject(ACaption, TObject(ASeriesClass));
+  if SeriesClassRegistry.IndexOfClass(ASeriesClass) < 0 then
+    SeriesClassRegistry.Add(TClassRegistryItem.Create(ASeriesClass, ACaption));
+end;
+
+procedure RegisterSeriesClass(ASeriesClass: TSeriesClass; ACaptionPtr: PStr);
+begin
+  if SeriesClassRegistry.IndexOfClass(ASeriesClass) < 0 then
+    SeriesClassRegistry.Add(TClassRegistryItem.CreateRes(ASeriesClass, ACaptionPtr));
 end;
 
 procedure WriteComponentToStream(AStream: TStream; AComponent: TComponent);
@@ -787,6 +799,12 @@ begin
     AxisList.Draw(MaxInt, axisIndex);
 end;
 
+procedure TChart.DoContextPopup(MousePos: TPoint; var Handled: Boolean);
+begin
+  if FDisablePopupMenu then Handled := true;
+  inherited;
+end;
+
 function TChart.DoMouseWheel(
   AShift: TShiftState; AWheelDelta: Integer; AMousePos: TPoint): Boolean;
 const
@@ -811,7 +829,6 @@ procedure TChart.Draw(ADrawer: IChartDrawer; const ARect: TRect);
 var
   ldd: TChartLegendDrawingData;
   s: TBasicChartSeries;
-  fnt: TFont;
 begin
   Prepare;
 
@@ -825,7 +842,7 @@ begin
     FClipRect.Bottom -= Bottom;
   end;
 
-  with ClipRect do begin;
+  with ClipRect do begin
     FTitle.Measure(ADrawer, 1, Left, Right, Top);
     FFoot.Measure(ADrawer, -1, Left, Right, Bottom);
   end;
@@ -876,14 +893,10 @@ begin
 
   // Undo changes made by the drawer (mainly for printing). The user may print
   // something else after the chart and, for example, would not expect the font
-  // to be rotated.
-  // (Workaround for issue #0027163)
-  fnt := TFont.Create;            // to effectively reset font orientation
-  try
-    ADrawer.Font := fnt;
-  finally
-    fnt.Free;
-  end;
+  // to be rotated (Fix for issue #0027163) or the pen to be in xor mode.
+  ADrawer.ResetFont;
+  ADrawer.SetXor(false);
+  ADrawer.PrepareSimplePen(clBlack);     // resets canvas pen mode to pmCopy
   ADrawer.SetPenParams(psSolid, clDefault);
   ADrawer.SetBrushParams(bsSolid, clWhite);
   ADrawer.SetAntialiasingMode(amDontCare);
@@ -987,7 +1000,7 @@ begin
     exit;
   end;
   for i := 0 to SeriesClassRegistry.Count - 1 do begin
-    AClass := TSeriesClass(SeriesClassRegistry.Objects[i]);
+    AClass := TSeriesClass(SeriesClassRegistry.GetClass(i));
     if AClass.ClassNameIs(AClassName) then exit;
   end;
   AClass := nil;
@@ -1251,11 +1264,19 @@ begin
 end;
 
 procedure TChart.Notification(AComponent: TComponent; AOperation: TOperation);
+var
+  ax: TChartAxis;
 begin
   if (AOperation = opRemove) and (AComponent = Toolset) then
     FToolset := nil
   else if (AOperation = opRemove) and (AComponent = GUIConnector) then
-    GUIConnector := nil;
+    GUIConnector := nil
+  else if (AOperation = opRemove) and (AComponent is TChartStyles) then begin
+    for ax in FAxisList do
+      if ax.Marks.Stripes = AComponent then
+        ax.Marks.Stripes := nil;
+  end;
+
   inherited Notification(AComponent, AOperation);
 end;
 
@@ -1866,12 +1887,21 @@ procedure TBasicChartTool.Activate;
 begin
   FChart.FActiveToolIndex := Index;
   FChart.MouseCapture := true;
+  FChart.FDisablePopupMenu := false;
+  FStartMousePos := Mouse.CursorPos;
 end;
 
 procedure TBasicChartTool.Deactivate;
 begin
   FChart.MouseCapture := false;
   FChart.FActiveToolIndex := -1;
+  if PopupMenuConflict then
+    FChart.FDisablePopupMenu := true;
+end;
+
+function TBasicChartTool.PopupMenuConflict: Boolean;
+begin
+  Result := false;
 end;
 
 procedure SkipObsoleteChartProperties;
@@ -1896,7 +1926,7 @@ end;
 
 initialization
   SkipObsoleteChartProperties;
-  SeriesClassRegistry := TStringList.Create;
+  SeriesClassRegistry := TClassRegistry.Create;
   ShowMessageProc := @ShowMessage;
 
 finalization

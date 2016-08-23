@@ -80,8 +80,10 @@ const
   ctnVarDefinition      = 21;
   ctnConstDefinition    = 22;
   ctnGlobalProperty     = 23;
-  ctnUseUnit            = 24; // StartPos=unitname, EndPos=unitname+inFilename
+  ctnUseUnit            = 24; // StartPos=unit, EndPos=unitname+inFilename, children ctnUseUnitNamespace, ctnUseUnitClearName
   ctnVarArgs            = 25;
+  ctnUseUnitNamespace   = 26; // <namespace>.clearname.pas
+  ctnUseUnitClearName   = 27; // namespace.<clearname>.pas
 
   ctnClass              = 30;
   ctnClassInterface     = 31;
@@ -131,19 +133,20 @@ const
   ctnTypeType           = 83;
   ctnFileType           = 84;
   ctnPointerType        = 85;
-  ctnClassOfType        = 86;
+  ctnClassOfType        = 86; // 1st child = ctnIdentifier
   ctnVariantType        = 87;
-  ctnSpecialize         = 88;
-  ctnSpecializeType     = 89;
-  ctnSpecializeParams   = 90;
-  ctnGenericType        = 91;// 1. child = ctnGenericName, 2. child = ctnGenericParams, 3. child = type
-  ctnGenericName        = 92; // parent = ctnGenericType
-  ctnGenericParams      = 93; // parent = ctnGenericType, children = ctnGenericParameter
-  ctnGenericParameter   = 94; // can has a child ctnGenericConstraint
-  ctnGenericConstraint  = 95; // parent = ctnGenericParameter
-  ctnReferenceTo        = 96; // 1. child = ctnProcedure
-  ctnConstant           = 97;
-  ctnHintModifier       = 98; // deprecated, platform, unimplemented, library, experimental
+  ctnSpecialize         = 88; // 1st child = ctnSpecializeType, 2nd child = ctnSpecializeParams
+  ctnSpecializeType     = 89; // parent = ctnSpecialize
+  ctnSpecializeParams   = 90; // list of ctnSpecializeParam, parent = ctnSpecialize
+  ctnSpecializeParam    = 91; // parent = ctnSpecializeParams
+  ctnGenericType        = 92;// 1st child = ctnGenericName, 2nd child = ctnGenericParams, 3th child = type
+  ctnGenericName        = 93; // parent = ctnGenericType
+  ctnGenericParams      = 94; // parent = ctnGenericType, children = ctnGenericParameter
+  ctnGenericParameter   = 95; // can has a child ctnGenericConstraint
+  ctnGenericConstraint  = 96; // parent = ctnGenericParameter
+  ctnReferenceTo        = 97; // 1st child = ctnProcedure
+  ctnConstant           = 98;
+  ctnHintModifier       = 99; // deprecated, platform, unimplemented, library, experimental
 
   ctnBeginBlock         =100;
   ctnAsmBlock           =101;
@@ -194,7 +197,9 @@ const
                          ctnInitialization,ctnFinalization];
   AllFindContextDescs = AllIdentifierDefinitions + AllCodeSections + AllClasses +
      [ctnProcedure];
-  AllPointContexts = AllClasses+AllSourceTypes+[ctnEnumerationType,ctnInterface,ctnImplementation,ctnTypeType];
+  AllPointContexts = AllClasses+AllSourceTypes+
+    [ctnEnumerationType,ctnInterface,ctnImplementation,ctnTypeType,
+     ctnUseUnitNamespace,ctnUseUnitClearName,ctnRangedArrayType,ctnOpenArrayType];
 
 
   // CodeTreeNodeSubDescriptors
@@ -301,7 +306,7 @@ type
   public
     Node: TCodeTreeNode;
     Txt: string;
-    ExtTxt1, ExtTxt2, ExtTxt3: string;
+    ExtTxt1, ExtTxt2, ExtTxt3, ExtTxt4: string;
     Position: integer;
     Data: Pointer;
     Flags: cardinal;
@@ -397,6 +402,8 @@ begin
   ctnPackage: Result:='Package';
   ctnLibrary: Result:='Library';
   ctnUnit: Result:='Unit';
+  ctnUseUnitNamespace: Result:='Namespace';
+  ctnUseUnitClearName: Result:='Unit name without namespace';
   ctnInterface: Result:='Interface Section';
   ctnImplementation: Result:='Implementation';
   ctnInitialization: Result:='Initialization';
@@ -444,6 +451,7 @@ begin
   ctnSpecialize: Result:='Specialize Type';
   ctnSpecializeType: Result:='Specialize Typename';
   ctnSpecializeParams: Result:='Specialize Parameterlist';
+  ctnSpecializeParam: Result:='Specialize Parameter';
   ctnGenericType: Result:='Generic Type';
   ctnGenericName: Result:='Generic Type Name';
   ctnGenericParams: Result:='Generic Type Params';
@@ -1070,6 +1078,7 @@ begin
   ExtTxt1:='';
   ExtTxt2:='';
   ExtTxt3:='';
+  ExtTxt4:='';
   Node:=nil;
   Position:=-1;
   Data:=nil;
@@ -1095,7 +1104,7 @@ begin
     DbgOut('Node=',NodeDescriptionAsString(Node.Desc))
   else
     DbgOut('Node=nil');
-  DbgOut(' Position=',dbgs(Position),' Txt="'+Txt+'" ExtTxt1="'+ExtTxt1+'" ExtTxt2="'+ExtTxt2+'" ExtTxt3="'+ExtTxt3+'"');
+  DbgOut(' Position=',dbgs(Position),' Txt="'+Txt+'" ExtTxt1="'+ExtTxt1+'" ExtTxt2="'+ExtTxt2+'" ExtTxt3="'+ExtTxt3+'" ExtTxt4="'+ExtTxt4+'"');
   debugln;
 end;
 
@@ -1105,7 +1114,8 @@ begin
     +MemSizeString(Txt)
     +MemSizeString(ExtTxt1)
     +MemSizeString(ExtTxt2)
-    +MemSizeString(ExtTxt3);
+    +MemSizeString(ExtTxt3)
+    +MemSizeString(ExtTxt4);
 end;
 
 end.

@@ -33,12 +33,12 @@ uses
   // RTL + LCL
   Classes, SysUtils, LCLProc, StdCtrls, ExtCtrls,
   // CodeTools
-  SourceLog, FileProcs, CodeToolManager, CodeToolsConfig, CodeCache,
+  BasicCodeTools, SourceLog, FileProcs, CodeToolManager, CodeToolsConfig, CodeCache,
   // LazUtils
   FileUtil, LazFileUtils, LazFileCache, LazUTF8, lazutf8classes,
   AvgLvlTree, Laz2_XMLCfg,
   // IDE
-  LazConf;
+  IDECmdLine, LazConf;
 
 type
   // comments
@@ -76,7 +76,7 @@ type
       Data: TObject) of object;
       
 // file operations
-function BackupFile(const Filename, BackupFilename: string): boolean;
+function BackupFileForWrite(const Filename, BackupFilename: string): boolean;
 function ClearFile(const Filename: string; RaiseOnError: boolean): boolean;
 function CreateEmptyFile(const Filename: string): boolean;
 function CopyFileWithMethods(const SrcFilename, DestFilename: string;
@@ -359,18 +359,29 @@ begin
 end;
 
 function FilenameIsPascalSource(const Filename: string): boolean;
-var Ext: string;
-  p: Integer;
-  AnUnitName: String;
+var
+  s: string;
+  i: Integer;
 begin
-  AnUnitName:=ExtractFileNameOnly(Filename);
-  if (AnUnitName='') or (not IsValidIdent(AnUnitName)) then
-    exit(false);
+  Result:=False;
+  // Check unit name
+  s:=ExtractFileNameOnly(Filename);
+  if (s='') or not IsDottedIdentifier(s) then
+    exit;
+  // Check extension
+  s:=lowercase(ExtractFileExt(Filename));
+  for i:=Low(PascalSourceExt) to High(PascalSourceExt) do
+    if s=PascalSourceExt[i] then
+      exit(True);
+end;
+
+function FilenameIsFormText(const Filename: string): boolean;
+var
+  Ext: string;
+begin
   Ext:=lowercase(ExtractFileExt(Filename));
-  for p:=Low(PascalFileExt) to High(PascalFileExt) do
-    if Ext=PascalFileExt[p] then
-      exit(true);
-  Result:=(Ext='.lpr') or (Ext='.dpr') or (Ext='.dpk');
+  Result:=((Ext='.lfm') or (Ext='.dfm') or (Ext='.xfm'))
+          and (ExtractFileNameOnly(Filename)<>'');
 end;
 
 function FindShortFileNameOnDisk(const Filename: string): string;
@@ -419,11 +430,13 @@ end;
 
 function FindFPCTool(const Executable, CompilerFilename: string): string;
 begin
-  DebugLn('FindFPCTool Executable="',Executable,'" CompilerFilename="',CompilerFilename,'"');
+  if ConsoleVerbosity>=0 then
+    DebugLn('Hint: (lazarus) FindFPCTool Executable="',Executable,'" CompilerFilename="',CompilerFilename,'"');
   Result:=FindDefaultExecutablePath(Executable);
   if Result<>'' then exit;
   Result:=AppendPathDelim(ExtractFilePath(CompilerFilename))+Executable;
-  DebugLn('FindFPCTool Try="',Result);
+  if ConsoleVerbosity>=0 then
+    DebugLn('Hint: (lazarus) FindFPCTool Try="',Result);
   if FileExistsUTF8(Result) then exit;
   Result:='';
 end;
@@ -446,14 +459,6 @@ begin
     else if NewFilename<>OldFilename then
       List[i]:=NewFilename;
   end;
-end;
-
-function FilenameIsFormText(const Filename: string): boolean;
-var Ext: string;
-begin
-  Ext:=lowercase(ExtractFileExt(Filename));
-  Result:=((Ext='.lfm') or (Ext='.dfm') or (Ext='.xfm'))
-          and (ExtractFileNameOnly(Filename)<>'');
 end;
 
 function MergeSearchPaths(const OldSearchPath, AddSearchPath: string): string;
@@ -1398,7 +1403,7 @@ begin
 end;
 
 {-------------------------------------------------------------------------------
-  BackupFile
+  BackupFileForWrite
 
   Params: const Filename, BackupFilename: string
   Result: boolean
@@ -1406,7 +1411,7 @@ end;
   Rename Filename to Backupfilename and create empty Filename with same
   file attributes
 -------------------------------------------------------------------------------}
-function BackupFile(const Filename, BackupFilename: string): boolean;
+function BackupFileForWrite(const Filename, BackupFilename: string): boolean;
 
   function FileIsLocked(const {%H-}FileName: String): Boolean;
   {$ifdef Windows}
@@ -1427,6 +1432,7 @@ function BackupFile(const Filename, BackupFilename: string): boolean;
 
 var
   FHandle: THandle;
+  Code: TCodeBuffer;
   {$IFdef MSWindows}
   OldAttr: Longint;
   {$ELSE}
@@ -1439,10 +1445,11 @@ begin
   {$IFdef MSWindows}
   OldAttr := FileGetAttrUTF8(Filename);
   {$ELSE}
-  FpStat(Filename, OldInfo{%H-});
+  if FpStat(Filename, OldInfo{%H-})<>0 then
+    exit; // can't backup this file
   {$ENDIF}
   
-  // if not a symlink/hardlink or locked => rename old file, create empty new file
+  // if not a symlink/hardlink or locked => rename old file (quick), create empty new file
   if not FileIsSymlink(Filename) and
      not FileIsHardLink(FileName) and
      not FileIsLocked(Filename) and
@@ -1451,8 +1458,11 @@ begin
     // create empty file
     FHandle := FileCreate(UTF8ToSys(FileName));
     FileClose(FHandle);
+    Code:=CodeToolBoss.FindFile(Filename);
+    if Code<>nil then
+      Code.InvalidateLoadDate;
   end
-  else // file is a symlink/hardlink or locked or rename failed => copy file
+  else // file is a symlink/hardlink or locked or rename failed => copy file (slow)
   if not CopyFile(Filename, BackupFilename) then exit;
 
   // restore file attributes

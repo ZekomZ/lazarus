@@ -59,12 +59,16 @@ uses
 {$IFDEF IDE_MEM_CHECK}
   MemCheck,
 {$ENDIF}
-  Classes, LCLType, LCLIntf, Buttons, Menus, SysUtils,
-  typinfo, Controls, Graphics, ExtCtrls, Dialogs, FileUtil, Forms,
-  LazFileUtils, CodeToolManager, CodeCache, AVL_Tree, SynEditKeyCmds,
+  Classes, SysUtils, typinfo, AVL_Tree,
+  LCLType, LCLIntf, Buttons, Menus, Controls, Graphics, ExtCtrls, Dialogs, Forms,
+  SynEditKeyCmds,
+  // Codetools
+  CodeToolManager, CodeCache,
+  // LazUtils
+  FileUtil, LazFileUtils,
   // IDEIntf
   PropEdits, ObjectInspector, MenuIntf, SrcEditorIntf, ProjectIntf,
-  CompOptsIntf, LazIDEIntf, IDEDialogs, IDEWindowIntf,
+  CompOptsIntf, LazIDEIntf, IDEWindowIntf,
   // IDE
   LazConf, LazarusIDEStrConsts, ProjectDefs, Project, PublishModule, BuildLazDialog,
   TransferMacros, ProgressDlg, EnvironmentOpts, EditorOptions, CompilerOptions,
@@ -154,10 +158,6 @@ type
     function DoPublishModule(Options: TPublishModuleOptions;
                              const SrcDirectory, DestDirectory: string
                              ): TModalResult; virtual; abstract;
-
-    function ExtendProjectUnitSearchPath(AProject: TProject; NewUnitPaths: string): boolean;
-    function ExtendProjectIncSearchPath(AProject: TProject; NewIncPaths: string): boolean;
-
     function DoFixupComponentReferences(RootComponent: TComponent;
                         OpenFlags: TOpenFlags): TModalResult; virtual; abstract;
 
@@ -346,52 +346,6 @@ begin
   if MainBarSubTitle=AValue then exit;
   inherited SetMainBarSubTitle(AValue);
   UpdateCaption;
-end;
-
-function TMainIDEInterface.ExtendProjectUnitSearchPath(AProject: TProject;
-  NewUnitPaths: string): boolean;
-var
-  CurUnitPaths: String;
-  r: TModalResult;
-begin
-  CurUnitPaths:=AProject.CompilerOptions.ParsedOpts.GetParsedValue(pcosUnitPath);
-  NewUnitPaths:=RemoveSearchPaths(NewUnitPaths,CurUnitPaths);
-  if NewUnitPaths<>'' then begin
-    NewUnitPaths:=CreateRelativeSearchPath(NewUnitPaths,AProject.ProjectDirectory);
-    r:=IDEMessageDialog(lisExtendUnitPath,
-      Format(lisExtendUnitSearchPathOfProjectWith, [#13, NewUnitPaths]),
-      mtConfirmation, [mbYes, mbNo, mbCancel]);
-    case r of
-    mrYes: AProject.CompilerOptions.OtherUnitFiles:=
-      MergeSearchPaths(AProject.CompilerOptions.OtherUnitFiles,NewUnitPaths);
-    mrNo: ;
-    else exit(false);
-    end;
-  end;
-  Result:=true;
-end;
-
-function TMainIDEInterface.ExtendProjectIncSearchPath(AProject: TProject;
-  NewIncPaths: string): boolean;
-var
-  CurIncPaths: String;
-  r: TModalResult;
-begin
-  CurIncPaths:=AProject.CompilerOptions.ParsedOpts.GetParsedValue(pcosIncludePath);
-  NewIncPaths:=RemoveSearchPaths(NewIncPaths,CurIncPaths);
-  if NewIncPaths<>'' then begin
-    NewIncPaths:=CreateRelativeSearchPath(NewIncPaths,AProject.ProjectDirectory);
-    r:=IDEMessageDialog(lisExtendIncludePath,
-      Format(lisExtendIncludeFilesSearchPathOfProjectWith, [#13, NewIncPaths]),
-      mtConfirmation, [mbYes, mbNo, mbCancel]);
-    case r of
-    mrYes: AProject.CompilerOptions.IncludePath:=
-      MergeSearchPaths(AProject.CompilerOptions.IncludePath,NewIncPaths);
-    mrNo: ;
-    else exit(false);
-    end;
-  end;
-  Result:=true;
 end;
 
 function TMainIDEInterface.DoJumpToSourcePosition(const Filename: string; NewX, NewY,
@@ -590,9 +544,9 @@ begin
      'type'+LE
     +'  T'+ResourceName+' = class('+ResourceClass.ClassName+')'+LE
     +'  private'+LE
-    +'    { private declarations }'+LE
+    +LE
     +'  public'+LE
-    +'    { public declarations }'+LE
+    +LE
     +'  end;'+LE
     +LE;
 

@@ -22,10 +22,10 @@ interface
 
 uses
   // RTL + FCL + LCL
-  Types, typinfo, Classes, SysUtils,
+  Types, typinfo, Classes, SysUtils, LMessages,
   LResources, LCLIntf, InterfaceBase, LCLStrConsts, LCLType, LCLProc, Forms,
   Controls, Themes, GraphType, Graphics, Buttons, ButtonPanel, StdCtrls,
-  ExtCtrls, LCLClasses, ClipBrd,
+  ExtCtrls, LCLClasses, ClipBrd, Menus,
   // LazUtils
   FileUtil, LazFileUtils;
 
@@ -58,6 +58,10 @@ type
 
   { TCommonDialog }
 
+  TCDWSEventCapability = (cdecWSPerformsDoShow, cdecWSPerformsDoCanClose, cdecWSPerformsDoClose,
+                          cdecWSNOCanCloseSupport);
+  TCDWSEventCapabilities = set of TCDWSEventCapability;
+
   TCommonDialog = class(TLCLComponent)
   private
     FHandle : THandle;
@@ -68,8 +72,11 @@ type
     FTitle : string;
     FUserChoice: integer;
     FHelpContext: THelpContext;
-    FCanCloseCalled: Boolean;
+    FDoCanCloseCalled: Boolean;
+    FDoShowCalled: Boolean;
+    FDoCloseCalled: Boolean;
     FClosing: boolean;
+    FWSEventCapabilities :TCDWSEventCapabilities;
     procedure SetHandle(const AValue: THandle);
     function IsTitleStored: boolean;
   protected
@@ -80,6 +87,7 @@ type
     function GetWidth: Integer; virtual;
     procedure SetHeight(const AValue: integer); virtual;
     procedure SetWidth(const AValue: integer); virtual;
+    procedure ResetShowCloseFlags;
   public
     FCompStyle : LongInt;
     constructor Create(TheOwner: TComponent); override;
@@ -120,7 +128,6 @@ type
     procedure SetFilterIndex(const AValue: Integer);
   protected
     class procedure WSRegisterClass; override;
-    function DoExecute: boolean; override;
     function GetFilterIndex: Integer; virtual;
     procedure SetFileName(const Value: String); virtual;
     procedure SetFilter(const Value: String); virtual;
@@ -128,8 +135,8 @@ type
   public
     constructor Create(TheOwner: TComponent); override;
     destructor Destroy; override;
+    procedure DoCanClose(var CanClose: Boolean); override;
     procedure DoTypeChange; virtual;
-    function Execute: boolean; override;
     property Files: TStrings read FFiles;
     property HistoryList: TStrings read FHistoryList write SetHistoryList;
     procedure IntfFileTypeChanged(NewFilterIndex: Integer);
@@ -200,6 +207,7 @@ type
     function DefaultTitle: string; override;
   public
     constructor Create(TheOwner: TComponent); override;
+    procedure DoCanClose(var CanClose: Boolean); override;
     procedure DoFolderChange; virtual;
     procedure DoSelectionChange; virtual;
     procedure IntfSetOption(const AOption: TOpenOption; const AValue: Boolean);
@@ -410,6 +418,7 @@ type
     function GetHeight: Integer; override;
     function GetWidth: Integer; override;
     procedure DoCloseForm(Sender: TObject; var CloseAction: TCloseAction);virtual;
+    procedure DoShowForm(Sender: TObject);virtual;
     procedure Find; virtual;
     procedure Help; virtual;
     procedure Replace; virtual;
@@ -423,7 +432,7 @@ type
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure CloseDialog;
-    function Execute: Boolean;override;
+    function Execute: Boolean; override;
     property Left: Integer read GetLeft write SetLeft;
     property Position: TPoint read GetPosition write SetPosition;
     property Top: Integer read GetTop write SetTop;
@@ -515,17 +524,38 @@ function MessageDlgPosHelp(const aMsg: string; DlgType: TMsgDlgType;
             const HelpFileName: string): TModalResult; overload;
 function CreateMessageDialog(const Msg: string; DlgType: TMsgDlgType;
             Buttons: TMsgDlgButtons): TForm; overload;
+function DefaultPromptDialog(const DialogCaption,
+  DialogMessage: String;
+  DialogType: longint; Buttons: PLongint;
+  ButtonCount, DefaultIndex, EscapeResult: Longint;
+  UseDefaultPos: boolean;
+  X, Y: Longint): Longint;// widgetset independent implementation, see PromptDialogFunction
+
 function QuestionDlg(const aCaption, aMsg: string; DlgType: TMsgDlgType;
             Buttons: array of const; HelpCtx: Longint): TModalResult; overload;
 function QuestionDlg(const aCaption, aMsg: string; DlgType: TMsgDlgType;
             Buttons: array of const; const HelpKeyword: string): TModalResult; overload;
+function DefaultQuestionDialog(const aCaption, aMsg: string; DlgType: LongInt;
+  Buttons: TDialogButtons; HelpCtx: Longint): LongInt;// widgetset independent implementation, see QuestionDialogFunction
 
 procedure ShowMessage(const aMsg: string);
 procedure ShowMessageFmt(const aMsg: string; Params: array of const);
 procedure ShowMessagePos(const aMsg: string; X, Y: Integer);
+function DefaultMessageBox(Text, Caption: PChar; Flags: Longint) : Integer;// widgetset independent implementation, see MessageBoxFunction
 
 function InputBox(const ACaption, APrompt, ADefault : String) : String;
 function PasswordBox(const ACaption, APrompt : String) : String;
+
+type
+  TCustomCopyToClipboardDialog = class(TForm)
+  protected
+    procedure DoCreate; override;
+  public
+    function GetMessageText: string; virtual; abstract;
+  end;
+
+procedure RegisterDialogForCopyToClipboard(const ADlg: TCustomForm);
+procedure DialogCopyToClipboard(Self, Sender: TObject; var Key: Word; Shift: TShiftState);
 
 const
   cInputQueryEditSizePixels: integer = 260; // Edit size in pixels
@@ -549,6 +579,8 @@ function InputQuery(const ACaption, APrompt : String; MaskInput : Boolean; var V
 function InputQuery(const ACaption, APrompt : String; var Value : String) : Boolean;
 function InputQuery(const ACaption: string; const APrompts: array of string;
   var AValues: array of string; ACloseEvent: TInputCloseQueryEvent = nil): boolean;
+function DefaultInputDialog(const InputCaption, InputPrompt : String;
+  MaskInput : Boolean; var Value : String) : Boolean;// widgetset independent implementation, see InputDialogFunction
 
 function ExtractColorIndexAndColor(const AColorList: TStrings; const AIndex: Integer;
   out ColorIndex: Integer; out ColorValue: TColor): Boolean;
@@ -625,7 +657,7 @@ begin
   RegisterComponents('Misc',[TColorButton]);
 end;
 
-function ShowMessageBox(Text, Caption: PChar; Flags: Longint) : Integer;
+function DefaultMessageBox(Text, Caption: PChar; Flags: Longint) : Integer;
 var
   DlgType : TMsgDlgType;
   Buttons : TMsgDlgButtons;
@@ -743,12 +775,20 @@ begin
   FCopies:=1;
 end;
 
+{ TCustomCopyToClipboardDialog }
+
+procedure TCustomCopyToClipboardDialog.DoCreate;
+begin
+  inherited DoCreate;
+
+  RegisterDialogForCopyToClipboard(Self);
+end;
 
 initialization
-  Forms.MessageBoxFunction := @ShowMessageBox;
-  InterfaceBase.InputDialogFunction := @ShowInputDialog;
-  InterfaceBase.PromptDialogFunction := @ShowPromptDialog;
-  InterfaceBase.QuestionDialogFunction := @ShowQuestionDialog;
+  Forms.MessageBoxFunction := @DefaultMessageBox;
+  InterfaceBase.InputDialogFunction := @DefaultInputDialog;
+  InterfaceBase.PromptDialogFunction := @DefaultPromptDialog;
+  InterfaceBase.QuestionDialogFunction := @DefaultQuestionDialog;
 
 finalization
   InterfaceBase.InputDialogFunction := nil;

@@ -498,6 +498,14 @@ msgstr "创建默认的事件"
 msgid "Create new field and add it at current position"
 msgstr ""
 
+#: objinspstrconsts.oiscurrentparent
+msgid "Current parent"
+msgstr ""
+
+#: objinspstrconsts.oiscurrentparents
+msgid "Current parents"
+msgstr ""
+
 #: objinspstrconsts.oiscutcomponents
 #, fuzzy
 #| msgid "Cut components"
@@ -787,6 +795,14 @@ msgstr ""
 msgid "Select All Fields"
 msgstr ""
 
+#: objinspstrconsts.oisselectedcontrol
+msgid "Selected control"
+msgstr ""
+
+#: objinspstrconsts.oisselectedcontrols
+msgid "Selected controls"
+msgstr ""
+
 #: objinspstrconsts.oisselectedproperties
 msgid "&Selected Properties"
 msgstr ""
@@ -821,6 +837,10 @@ msgstr "设为默认: %s"
 
 #: objinspstrconsts.oissettodefaulthint
 msgid "Set property value to Default"
+msgstr ""
+
+#: objinspstrconsts.oisshowclasses
+msgid "Show classes"
 msgstr ""
 
 #: objinspstrconsts.oisshowcomponenttree
@@ -1370,9 +1390,17 @@ msgstr "无"
 msgid "Add Images"
 msgstr "添加图像"
 
+#: objinspstrconsts.sccsiledtopendialogn
+msgid "New Image"
+msgstr ""
+
 #: objinspstrconsts.sccsiledtransparentcolor
 msgid "Transparent Color:"
 msgstr "透明的颜色"
+
+#: objinspstrconsts.sccsiledtreplace
+msgid "&Replace ..."
+msgstr ""
 
 #: objinspstrconsts.sccsiledtsave
 #, fuzzy
@@ -1608,6 +1636,10 @@ msgstr ""
 
 #: objinspstrconsts.s_addassingle
 msgid "Add as single"
+msgstr ""
+
+#: objinspstrconsts.s_confirm_clear
+msgid "Are you sure to clear image list?"
 msgstr ""
 
 #: objinspstrconsts.s_splitimage

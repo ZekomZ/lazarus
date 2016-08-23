@@ -1,10 +1,16 @@
 {
+ **********************************************************************
+  This file is part of LazUtils.
   All functions are thread safe unless explicitely stated
+
+  See the file COPYING.modifiedLGPL.txt, included in this distribution,
+  for details about the license.
+ **********************************************************************
 }
 unit LazFileUtils;
 
 {$mode objfpc}{$H+}
-
+{$i lazutils_defines.inc}
 interface
 
 uses
@@ -106,7 +112,7 @@ Function FileCreateUtf8(Const FileName : String; ShareMode : Integer; Rights : C
 function FileSizeUtf8(const Filename: string): int64;
 function GetFileDescription(const AFilename: string): string;
 function ReadAllLinks(const Filename: string;
-                      ExceptionOnError: boolean): string; // if a link is broken returns ''
+                 {%H-}ExceptionOnError: boolean): string; // if a link is broken returns ''
 function TryReadAllLinks(const Filename: string): string; // if a link is broken returns Filename
 function GetShellLinkTarget(const FileName: string): string;
 
@@ -137,6 +143,11 @@ function ExtractFileRoot(FileName: String): String;
 {$IFDEF darwin}
 function GetDarwinSystemFilename(Filename: string): string;
 function GetDarwinNormalizedFilename(Filename: string; nForm:Integer=2): string;
+{$ENDIF}
+
+// windows paths
+{$IFDEF windows}
+function SHGetFolderPathUTF8(ID :  Integer) : String;
 {$ENDIF}
 
 procedure SplitCmdLineParams(const Params: string; ParamList: TStrings;
@@ -728,10 +739,9 @@ function ChompPathDelim(const Path: string): string;
 var
   Len, MinLen: Integer;
 begin
+  Result:=Path;
   if Path = '' then
     exit;
-
-  Result:=Path;
   Len:=length(Result);
   if (Result[1] in AllowDirectorySeparators) then begin
     MinLen := 1;

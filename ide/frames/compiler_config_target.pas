@@ -207,14 +207,14 @@ begin
   begin
     aTargetOS := '$(TargetOS)';
     if not GlobalMacroList.SubstituteStr(aTargetOS) then
-      raise Exception.CreateFmt('Cannot substitute macro "%s".', [aTargetOS]);
+      raise Exception.CreateFmt(lisCannotSubstituteMacroS, [aTargetOS]);
   end;
-  // Now hide/show the whole GroupBox because there is only one setting.
-  grbTargetOptions.Visible := AnsiStartsText('Win', aTargetOS);
-  if grbTargetOptions.Visible then
-    CurrentWidgetTypeLabel.AnchorSideTop.Control := grbTargetOptions
+
+  if AnsiStartsText('Win', aTargetOS) then
+    chkWin32GraphicApp.Caption := dlgWin32GUIApp + ' (-WG)'
   else
-    CurrentWidgetTypeLabel.AnchorSideTop.Control := grbTargetPlatform;
+    chkWin32GraphicApp.Caption := dlgWin32GUIApp + ' (-WG, '+
+      lisOptionValueIgnored+')';
 end;
 
 procedure TCompilerConfigTargetFrame.UpdateByTargetCPU(aTargetCPU: string);
@@ -227,13 +227,14 @@ begin
   begin
     aTargetCPU := '$(TargetCPU)';
     if not GlobalMacroList.SubstituteStr(aTargetCPU) then
-      raise Exception.CreateFmt('Cannot substitute macro "%s".', [aTargetCPU]);
+      raise Exception.CreateFmt(lisCannotSubstituteMacroS, [aTargetCPU]);
   end;
 
   // Update selection list for target processor
   sl:=TStringList.Create;
-  sl.Add('('+lisDefault+')');
   GetTargetProcessors(aTargetCPU,sl);
+  sl.Sort;
+  sl.Insert(0,'('+lisDefault+')');
   for i:=0 to sl.Count-1 do
     sl[i]:=ProcessorToCaption(sl[i]);
   TargetProcComboBox.Items.Assign(sl);

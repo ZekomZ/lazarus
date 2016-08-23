@@ -474,6 +474,14 @@ msgstr "Default-Ereignis erzeugen"
 msgid "Create new field and add it at current position"
 msgstr "Neues Feld an aktueller Position einfügen"
 
+#: objinspstrconsts.oiscurrentparent
+msgid "Current parent"
+msgstr ""
+
+#: objinspstrconsts.oiscurrentparents
+msgid "Current parents"
+msgstr ""
+
 #: objinspstrconsts.oiscutcomponents
 msgctxt "objinspstrconsts.oiscutcomponents"
 msgid "Cu&t"
@@ -751,6 +759,14 @@ msgstr "Alle au&swählen"
 msgid "Select All Fields"
 msgstr "Alle Felder auswählen"
 
+#: objinspstrconsts.oisselectedcontrol
+msgid "Selected control"
+msgstr ""
+
+#: objinspstrconsts.oisselectedcontrols
+msgid "Selected controls"
+msgstr ""
+
 #: objinspstrconsts.oisselectedproperties
 msgid "&Selected Properties"
 msgstr "Gewählte Eigenschaften"
@@ -786,6 +802,10 @@ msgstr "Auf Voreinstellung %s setzen"
 #: objinspstrconsts.oissettodefaulthint
 msgid "Set property value to Default"
 msgstr "Eigenschaftswert auf Vorgabe setzen"
+
+#: objinspstrconsts.oisshowclasses
+msgid "Show classes"
+msgstr ""
 
 #: objinspstrconsts.oisshowcomponenttree
 msgid "Show Component Tree"
@@ -1304,9 +1324,17 @@ msgstr "Keiner"
 msgid "Add Images"
 msgstr "Bilder hinzufügen"
 
+#: objinspstrconsts.sccsiledtopendialogn
+msgid "New Image"
+msgstr ""
+
 #: objinspstrconsts.sccsiledtransparentcolor
 msgid "Transparent Color:"
 msgstr "Transparente Farbe:"
+
+#: objinspstrconsts.sccsiledtreplace
+msgid "&Replace ..."
+msgstr ""
 
 #: objinspstrconsts.sccsiledtsave
 msgctxt "objinspstrconsts.sccsiledtsave"
@@ -1528,6 +1556,10 @@ msgstr "Taste fangen"
 msgid "Add as single"
 msgstr "Als Einzelbild hinzufügen"
 
+#: objinspstrconsts.s_confirm_clear
+msgid "Are you sure to clear image list?"
+msgstr ""
+
 #: objinspstrconsts.s_splitimage
 msgid "Split image"
 msgstr "Bild teilen"
@@ -1571,3 +1603,4 @@ msgstr "Tab nach links bewegen"
 #: objinspstrconsts.tccesmovetabright
 msgid "Move tab right"
 msgstr "Tab nach rechts bewegen"
+

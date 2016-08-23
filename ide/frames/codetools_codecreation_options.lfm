@@ -53,43 +53,10 @@ object CodetoolsCodeCreationOptionsFrame: TCodetoolsCodeCreationOptionsFrame
     AnchorSideTop.Side = asrCenter
     Left = 6
     Height = 15
-    Top = 195
+    Top = 166
     Width = 95
     Caption = 'TemplateFileLabel'
     ParentColor = False
-  end
-  object TemplateFileEdit: TEdit
-    AnchorSideLeft.Control = TemplateFileLabel
-    AnchorSideLeft.Side = asrBottom
-    AnchorSideTop.Control = EventMethodSectionComboBox
-    AnchorSideTop.Side = asrBottom
-    AnchorSideRight.Control = TemplateFileBrowseButton
-    Left = 107
-    Height = 23
-    Top = 191
-    Width = 418
-    Anchors = [akTop, akLeft, akRight]
-    BorderSpacing.Left = 6
-    BorderSpacing.Top = 6
-    TabOrder = 7
-    Text = 'TemplateFileEdit'
-  end
-  object TemplateFileBrowseButton: TButton
-    AnchorSideTop.Control = TemplateFileEdit
-    AnchorSideRight.Control = Owner
-    AnchorSideRight.Side = asrBottom
-    AnchorSideBottom.Control = TemplateFileEdit
-    AnchorSideBottom.Side = asrBottom
-    Left = 525
-    Height = 23
-    Top = 191
-    Width = 35
-    Anchors = [akTop, akRight, akBottom]
-    AutoSize = True
-    BorderSpacing.Right = 6
-    Caption = '...'
-    OnClick = TemplateFileBrowseButtonClick
-    TabOrder = 8
   end
   object GroupLocalVariablesCheckBox: TCheckBox
     AnchorSideLeft.Control = Owner
@@ -154,31 +121,27 @@ object CodetoolsCodeCreationOptionsFrame: TCodetoolsCodeCreationOptionsFrame
     Style = csDropDownList
     TabOrder = 2
   end
-  object EventMethodSectionLabel: TLabel
-    AnchorSideLeft.Control = Owner
-    AnchorSideTop.Control = EventMethodSectionComboBox
-    AnchorSideTop.Side = asrCenter
-    AnchorSideRight.Control = EventMethodSectionComboBox
-    Left = 6
-    Height = 15
-    Top = 166
-    Width = 138
-    BorderSpacing.Around = 6
-    Caption = 'EventMethodSectionLabel'
-    ParentColor = False
-  end
-  object EventMethodSectionComboBox: TComboBox
-    AnchorSideLeft.Control = EventMethodSectionLabel
+  object TemplateFileEdit: TFileNameEdit
+    AnchorSideLeft.Control = TemplateFileLabel
     AnchorSideLeft.Side = asrBottom
     AnchorSideTop.Control = GroupLocalVariablesCheckBox
     AnchorSideTop.Side = asrBottom
-    Left = 150
+    AnchorSideRight.Control = Owner
+    AnchorSideRight.Side = asrBottom
+    Left = 107
     Height = 23
     Top = 162
-    Width = 170
+    Width = 453
+    FilterIndex = 0
+    HideDirectories = False
+    ButtonWidth = 50
+    NumGlyphs = 1
+    Anchors = [akTop, akLeft, akRight]
+    BorderSpacing.Left = 6
     BorderSpacing.Top = 6
-    ItemHeight = 15
-    Style = csDropDownList
+    BorderSpacing.Right = 6
+    MaxLength = 0
     TabOrder = 6
+    Text = 'TemplateFileEdit'
   end
 end

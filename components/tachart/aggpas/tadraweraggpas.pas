@@ -56,6 +56,7 @@ type
       AStartAngle16Deg, AAngleLength16Deg: Integer);
     procedure Rectangle(const ARect: TRect);
     procedure Rectangle(AX1, AY1, AX2, AY2: Integer);
+    procedure ResetFont;
     procedure SetBrushColor(AColor: TChartColor);
     procedure SetBrushParams(AStyle: TFPBrushStyle; AColor: TChartColor);
     procedure SetPenParams(AStyle: TFPPenStyle; AColor: TChartColor);
@@ -196,6 +197,11 @@ begin
   FCanvas.Rectangle(ARect);
 end;
 
+procedure TAggPasDrawer.ResetFont;
+begin
+  FCanvas.Font.Orientation := 0;
+end;
+
 procedure TAggPasDrawer.SetBrush(ABrush: TFPCustomBrush);
 begin
   with FCanvas.Brush do begin
@@ -220,8 +226,6 @@ begin
 end;
 
 procedure TAggPasDrawer.SetFont(AFont: TFPCustomFont);
-const
-  DEFAULT_FONT_SIZE = 10; // Just a random value.
 var
   f: TAggLCLFont;
   fontSize: Integer;

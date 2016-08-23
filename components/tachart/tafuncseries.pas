@@ -164,6 +164,8 @@ type
     property Pointer;
     property Step: TFuncSeriesStep
       read FStep write SetStep default DEF_SPLINE_STEP;
+    property OnCustomDrawPointer;
+    property OnGetPointerStyle;
   end;
 
   TBadDataChartPen = class(TChartPen)
@@ -234,6 +236,8 @@ type
     property Source;
     property Title;
     property ZPosition;
+    property OnCustomDrawPointer;
+    property OnGetPointerStyle;
   published
     // Used when data is not suitable for drawing cubic spline --
     // e.g. points are too few or not ordered by X value.
@@ -381,7 +385,7 @@ implementation
 
 uses
   ipf, GraphType, IntfGraphics, Math, StrUtils, SysUtils,
-  TAGeometry, TAGraph, TAMath;
+  TAChartStrConsts, TAGeometry, TAGraph, TAMath;
 
 const
   DEF_PARAM_MIN = 0.0;
@@ -1940,12 +1944,12 @@ begin
 end;
 
 initialization
-  RegisterSeriesClass(TFuncSeries, 'Function series');
-  RegisterSeriesClass(TParametricCurveSeries, 'Parametric curve series');
-  RegisterSeriesClass(TBSplineSeries, 'B-Spline series');
-  RegisterSeriesClass(TCubicSplineSeries, 'Cubic spline series');
-  RegisterSeriesClass(TFitSeries, 'Least-squares fit series');
-  RegisterSeriesClass(TColorMapSeries, 'Color map series');
+  RegisterSeriesClass(TFuncSeries, @rsFunctionSeries);
+  RegisterSeriesClass(TParametricCurveSeries, @rsParametricCurveSeries);
+  RegisterSeriesClass(TBSplineSeries, @rsBSplineSeries);
+  RegisterSeriesClass(TCubicSplineSeries, @rsCubicSplineSeries);
+  RegisterSeriesClass(TFitSeries, @rsLeastSquaresFitSeries);
+  RegisterSeriesClass(TColorMapSeries, @rsColorMapSeries);
 
 end.
 

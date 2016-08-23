@@ -63,7 +63,7 @@ uses
   PackageIntf,
   // IDE
   LazarusIDEStrConsts, IDEProcs, DialogProcs, IDEOptionDefs, EnvironmentOpts,
-  PackageDefs, Project, MainIntf, PackageEditor, AddToProjectDlg, InputHistory;
+  PackageDefs, Project, PackageEditor, AddToProjectDlg, InputHistory;
   
 type
   TOnAddUnitToProject =
@@ -185,7 +185,7 @@ type
     procedure OnProjectEndUpdate(Sender: TObject; ProjectChanged: boolean);
     procedure EnableI18NForSelectedLFM(TheEnable: boolean);
   protected
-    procedure KeyUp(var Key: Word; Shift: TShiftState); override;
+    procedure KeyDown(var Key: Word; Shift: TShiftState); override;
     procedure IdleHandler(Sender: TObject; var {%H-}Done: Boolean);
   public
     constructor Create(TheOwner: TComponent); override;
@@ -652,9 +652,9 @@ begin
   if LazProject.EnableI18N and LazProject.EnableI18NForLFM
   and (HasLFMCount>0) then begin
     AddPopupMenuItem(lisEnableI18NForLFM,
-      @EnableI18NForLFMMenuItemClick, DisabledI18NForLFMCount<HasLFMCount);
+      @EnableI18NForLFMMenuItemClick, DisabledI18NForLFMCount>0);
     AddPopupMenuItem(lisDisableI18NForLFM,
-      @DisableI18NForLFMMenuItemClick, DisabledI18NForLFMCount>0);
+      @DisableI18NForLFMMenuItemClick, DisabledI18NForLFMCount<HasLFMCount);
   end;
 
   // Required packages section
@@ -997,7 +997,8 @@ begin
   ToolBar.Images            := IDEImages.Images_16;
   FilterEdit.OnGetImageIndex:=@OnTreeViewGetImageIndex;
 
-  AddBitBtn     := CreateToolButton('AddBitBtn', lisAddSub, lisClickToSeeTheChoices, 'laz_add', nil);
+  AddBitBtn     := CreateToolButton('AddBitBtn', lisAdd, lisClickToSeeTheChoices, 'laz_add', nil);
+  AddBitBtn.Style:=tbsButtonDrop;
   RemoveBitBtn  := CreateToolButton('RemoveBitBtn', lisRemove, lisPckEditRemoveSelectedItem, 'laz_delete', @RemoveBitBtnClick);
   CreateDivider;
   OptionsBitBtn := CreateToolButton('OptionsBitBtn', lisOptions, lisPckEditEditGeneralOptions, 'menu_environment_options', @OptionsBitBtnClick);
@@ -1190,7 +1191,7 @@ begin
   end;
 end;
 
-procedure TProjectInspectorForm.KeyUp(var Key: Word; Shift: TShiftState);
+procedure TProjectInspectorForm.KeyDown(var Key: Word; Shift: TShiftState);
 begin
   inherited KeyDown(Key, Shift);
   ExecuteIDEShortCut(Self,Key,Shift,nil);
@@ -1251,12 +1252,12 @@ end;
 
 function TProjectInspectorForm.ExtendIncSearchPath(NewIncPaths: string): boolean;
 begin
-  Result:=MainIDEInterface.ExtendProjectIncSearchPath(LazProject,NewIncPaths);
+  Result:=LazProject.ExtendIncSearchPath(NewIncPaths);
 end;
 
 function TProjectInspectorForm.ExtendUnitSearchPath(NewUnitPaths: string): boolean;
 begin
-  Result:=MainIDEInterface.ExtendProjectUnitSearchPath(LazProject,NewUnitPaths);
+  Result:=LazProject.ExtendUnitSearchPath(NewUnitPaths);
 end;
 
 function TProjectInspectorForm.FilesBaseDirectory: string;
@@ -1356,16 +1357,31 @@ end;
 procedure TProjectInspectorForm.UpdateTitle;
 var
   NewCaption: String;
+  IconStream: TStream;
 begin
   if not CanUpdate(pifNeedUpdateTitle) then exit;
 
+  Icon.Clear;
   if LazProject=nil then
-    Caption:=lisMenuProjectInspector
-  else begin
+  begin
+    Caption:=lisMenuProjectInspector;
+  end else
+  begin
     NewCaption:=LazProject.GetTitle;
     if NewCaption='' then
       NewCaption:=ExtractFilenameOnly(LazProject.ProjectInfoFile);
     Caption:=Format(lisProjInspProjectInspector, [NewCaption]);
+
+    if not LazProject.ProjResources.ProjectIcon.IsEmpty then
+    begin
+      IconStream := LazProject.ProjResources.ProjectIcon.GetStream;
+      if IconStream<>nil then
+        try
+          Icon.LoadFromStream(IconStream);
+        finally
+          IconStream.Free;
+        end;
+    end;
   end;
 end;
 

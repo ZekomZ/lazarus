@@ -1098,6 +1098,7 @@ begin
   TabPosition:=Node.TabPosition;
   BoundSplitterPos:=Node.BoundSplitterPos;
   WorkAreaRect:=Node.WorkAreaRect;
+  Monitor:=Node.Monitor;
   for a:=low(TAnchorKind) to high(TAnchorKind) do
     Anchors[a]:=Node.Anchors[a];
   while Count>Node.Count do Nodes[Count-1].Free;
@@ -1330,7 +1331,7 @@ begin
   // check parent
   if (NodeType=adltnNone) and (Parent<>nil) then
     raise EAnchorDockLayoutError.Create('invalid parent, root node');
-  if (NodeType=adltnCustomSite) and (Parent.NodeType<>adltnNone) then
+  if (NodeType=adltnCustomSite) and (Parent<>nil) and (Parent.NodeType<>adltnNone) then
     raise EAnchorDockLayoutError.Create('invalid parent, custom sites parent must be nil');
   if (Parent<>nil) and IsSplitter and (Parent.NodeType<>adltnLayout) then
     raise EAnchorDockLayoutError.Create('invalid parent, splitter needs parent layout');
@@ -1956,8 +1957,7 @@ begin
   Layout.LoadFromConfig(Config);
   for i:=FControlNames.Count-1 downto 0 do begin
     AName:=FControlNames[i];
-    if (AName<>'') and IsValidIdent(AName)
-    and (Layout.Root<>nil) then begin
+    if IsValidIdent(AName) and (Layout.Root<>nil) then begin
       Node:=Layout.Root.FindChildNode(AName,true);
       if (Node<>nil) and (Node.NodeType in [adltnControl,adltnCustomSite]) then
         continue;
@@ -1978,8 +1978,7 @@ begin
   Layout.LoadFromConfig(Path, Config);
   for i:=FControlNames.Count-1 downto 0 do begin
     AName:=FControlNames[i];
-    if (AName<>'') and IsValidIdent(AName)
-    and (Layout.Root<>nil) then begin
+    if IsValidIdent(AName) and (Layout.Root<>nil) then begin
       Node:=Layout.Root.FindChildNode(AName,true);
       if (Node<>nil) and (Node.NodeType in [adltnControl,adltnCustomSite]) then
         continue;

@@ -108,7 +108,7 @@ end;
  ------------------------------------------------------------------------------}
 function TCocoaWidgetSet.ClipboardFormatToMimeType(FormatID: TClipboardFormat): string;
 var
-  lFormat: TClipboardData;
+  lFormat: TCocoaClipboardData;
 begin
   {$IFDEF VerboseClipboard}
     DebugLn('TCocoaWidgetSet.ClipboardFormatToMimeType FormatID: ' + DbgS(FormatID));
@@ -131,7 +131,7 @@ function TCocoaWidgetSet.ClipboardGetData(ClipboardType: TClipboardType;
   FormatID: TClipboardFormat; Stream: TStream): boolean;
 var
   pasteboard: NSPasteboard;
-  lFormat: TClipboardData;
+  lFormat: TCocoaClipboardData;
   lNSStr: NSString;
   // for text
   lStr: String;
@@ -139,6 +139,11 @@ var
   lNSData: NSData;
   lNSbytes: PByte;
   i: Integer;
+  // for bitmap
+  image: TFPCustomImage;
+  lTmpStream: TMemoryStream;
+  reader: TFPCustomImageReader;
+  writer: TFPCustomImageWriter;
 begin
   Result := False;
   {$IFDEF VerboseClipboard}
@@ -173,6 +178,31 @@ begin
     lNSbytes := lNSData.bytes;
     for i := 0 to lNSData.length-1 do
       Stream.WriteByte(lNSbytes[i]);
+  end;
+  // In Cocoa images are stored as PNG, convert to BMP for LCL app usage
+  ccdtBitmap:
+  begin
+    lNSData := pasteboard.dataForType(lFormat.CocoaFormat);
+    if lNSData = nil then Exit;
+    lNSbytes := lNSData.bytes;
+
+    Image := TFPMemoryImage.Create(10, 10);
+    Reader := TFPReaderPNG.Create;
+    Writer := TFPWriterBMP.Create;
+    lTmpStream := TMemoryStream.Create;
+    try
+      for i := 0 to lNSData.length-1 do
+        lTmpStream.WriteByte(lNSbytes[i]);
+      lTmpStream.Position := 0;
+
+      Image.LoadFromStream(lTmpStream, Reader);
+      Image.SaveToStream(Stream, Writer);
+    finally
+      Image.Free;
+      Reader.Free;
+      Writer.Free;
+      lTmpStream.Free;
+    end;
   end;
   end;
 
@@ -234,7 +264,7 @@ function TCocoaWidgetSet.ClipboardGetOwnerShip(ClipboardType: TClipboardType;
 var
   pasteboard: NSPasteboard;
   i: Integer;
-  lCurFormat: TClipboardData;
+  lCurFormat: TCocoaClipboardData;
   DataStream: TMemoryStream;
   FormatToOwn: NSString;
   FormatToOwnArray: NSArray;
@@ -243,6 +273,11 @@ var
   lNSText: NSString;
   // non-text
   lNSData: NSData;
+  // for bitmap
+  image: TFPCustomImage;
+  lTmpStream: TMemoryStream;
+  reader: TFPCustomImageReader;
+  writer: TFPCustomImageWriter;
 begin
   Result := False;
   {$IFDEF VerboseClipboard}
@@ -260,7 +295,7 @@ begin
   try
     for i := 0 to FormatCount-1 do
     begin
-      lCurFormat := TClipboardData(Formats[i]);
+      lCurFormat := TCocoaClipboardData(Formats[i]);
       if lCurFormat = nil then Continue;
       DataStream.Position := 0;
       DataStream.Size := 0;
@@ -292,6 +327,31 @@ begin
         pasteboard.setData_forType(lNSData, lCurFormat.CocoaFormat);
         //lNSData.release; // this causes a crash
       end;
+      ccdtBitmap:
+      begin
+        FormatToOwn := lCurFormat.CocoaFormat;
+        FormatToOwnArray := NSArray.arrayWithObjects_count(@FormatToOwn, 1);
+
+        Image := TFPMemoryImage.Create(10, 10);
+        Reader := TFPReaderBMP.Create;
+        Writer := TFPWriterPNG.Create;
+        lTmpStream := TMemoryStream.Create;
+        try
+          DataStream.Position := 0;
+          Image.LoadFromStream(DataStream, Reader);
+          Image.SaveToStream(lTmpStream, Writer);
+          lTmpStream.Position := 0;
+          lNSData := NSData.dataWithBytes_length(lTmpStream.Memory, lTmpStream.Size);
+          pasteboard.declareTypes_owner(FormatToOwnArray, nil);
+          pasteboard.setData_forType(lNSData, lCurFormat.CocoaFormat);
+          //lNSData.release;
+        finally
+          Image.Free;
+          Reader.Free;
+          Writer.Free;
+          lTmpStream.Free;
+        end;
+      end;
       end;
     end;
   finally
@@ -310,7 +370,7 @@ end;
 function TCocoaWidgetSet.ClipboardRegisterFormat(const AMimeType: string): TClipboardFormat;
 var
   i: Integer;
-  lCurData: TClipboardData;
+  lCurData: TCocoaClipboardData;
   lNSStr: NSString = nil;
   lDataType: TCocoaClipboardDataType;
 begin
@@ -319,7 +379,7 @@ begin
   // Check first if it was already registered
   for i := 0 to ClipboardFormats.Count-1 do
   begin
-    lCurData := TClipboardData(ClipboardFormats.Items[i]);
+    lCurData := TCocoaClipboardData(ClipboardFormats.Items[i]);
     if lCurData.MimeType = AMimeType then
     begin
       Result := TClipboardFormat(lCurData);
@@ -339,12 +399,19 @@ begin
   'text/plain':
   begin
     lNSStr := NSPasteboardTypeString;
+    lNSStr.retain;
     lDataType := ccdtText;
   end;
   'image/png':
   begin
     lNSStr := NSPasteboardTypePNG;
+    lNSStr.retain;
     lDataType := ccdtCocoaStandard;
+  end;
+  'image/bmp':
+  begin
+    lNSStr := NSPasteboardTypePNG;
+    lDataType := ccdtBitmap;
   end;
   else
     lNSStr := NSStringUtf8(AMimeType);
@@ -353,7 +420,7 @@ begin
 
   if lNSStr <> nil then
   begin
-    lCurData := TClipboardData.Create(AMimeType, lNSStr, lDataType);
+    lCurData := TCocoaClipboardData.Create(AMimeType, lNSStr, lDataType);
     ClipboardFormats.Add(lCurData);
     Result := TClipboardFormat(lCurData);
   end;
@@ -570,6 +637,8 @@ begin
 end;
 
 function TCocoaWidgetSet.DeleteObject(GDIObject: HGDIOBJ): Boolean;
+const
+  SName = 'TCocoaWidgetSet.DeleteObject';
 var
   gdi: TCocoaGDIObject;
 begin
@@ -580,12 +649,26 @@ begin
   gdi := CheckGDIOBJ(GdiObject);
 
   if not Assigned(gdi) then
+  begin
+    DebugLn(SName, ' Error - GDIObject: ' +  DbgSName(gdi) + ' is unknown!');
     Exit;
+  end;
 
   if gdi.Global then
+  begin
+    // global brushes can be cached, so just exit here since we will free the resource later on
+    //DebugLn(SName, ' Error - GDIObject: ' +  DbgSName(gdi) + ' is global!');
     Exit;
+  end;
 
-  if gdi.RefCount = 0 then gdi.Destroy;
+  if gdi.RefCount <> 1 then
+  begin
+    DebugLn(SName, 'Error - GDIObject: ' + DbgSName(gdi) + ' is still selected!');
+    Exit;
+  end;
+
+  gdi.Destroy;
+  Result := True;
 end;
 
 function TCocoaWidgetSet.DestroyCaret(Handle: HWND): Boolean;
@@ -1635,10 +1718,10 @@ begin
   Result := Handle <> 0;
   if Result then
   begin
-    Info := PrepareUserEventInfo(Handle, Msg, WParam, LParam);
+    Info := NewUserEventInfo(Handle, Msg, WParam, LParam);
     // if we will want a postmessage using notification center
     // NSDistributedNotificationCenter.defaultCenter.postNotificationName_object_userInfo_deliverImmediately(NSMessageNotification, nil, Info, False);
-    Event := PrepareUserEvent(Handle, Info);
+    Event := PrepareUserEvent(Handle, Info, False);
     NSApp.postEvent_atStart(Event, False);
   end;
 end;
@@ -1809,7 +1892,9 @@ const
 var
   Modifiers: NSUInteger;
 begin
-  Modifiers := NSApp.currentEvent.modifierFlags;
+  // NSApp.currentEvent.modifierFlags doesn't work before events start coming,
+  // see bug 29272 and http://lists.apple.com/archives/cocoa-dev/2010/Feb/msg00105.html
+  Modifiers := NSEvent.modifierFlags_();
   case nVirtKey of
     VK_MENU,
     VK_LMENU:
@@ -1855,6 +1940,7 @@ begin
   dc:=CheckDC(ADC);
   gdi:=CheckGDIOBJ(GDIObj);
   if not Assigned(dc) then Exit;
+  if not Assigned(gdi) then Exit;
 
   if gdi is TCocoaBrush then
   begin // select brush
@@ -1881,10 +1967,12 @@ begin
     end;
     Result := HBITMAP(TCocoaBitmapContext(dc).Bitmap);
     TCocoaBitmapContext(dc).Bitmap := TCocoaBitmap(gdi);
+  end
+  else
+  begin
+    DebugLn(SName + ' Error - Unknown Object Type ' + DbgSName(gdi));
+    Exit;
   end;
-
-  if Result<>0 then TCocoaGDIObject(Result).Release;
-  if Assigned(gdi) then gdi.AddRef;
 
   {$IFDEF VerboseWinAPI}
     DebugLn(Format('TCocoaWidgetSet.SelectObject Result: %x', [Result]));
@@ -1899,10 +1987,11 @@ var
 begin
   if Handle <> 0 then
   begin
-    Info := PrepareUserEventInfo(Handle, Msg, WParam, LParam);
-    Event := PrepareUserEvent(Handle, Info);
+    Info := NewUserEventInfo(Handle, Msg, WParam, LParam);
+    Event := PrepareUserEvent(Handle, Info, True);
     NSApp.sendEvent(Event);
     Result := NSNumber(Info.objectForKey(NSMessageResult)).integerValue;
+    Info.Release;
   end;
 end;
 
@@ -2206,6 +2295,8 @@ begin
       Result := Round(NSScroller.scrollerWidthForControlSize(NSRegularControlSize));
     SM_SWSCROLLBARSPACING:
       Result := 0;
+    SM_LCLHasFormAlphaBlend:
+      Result := 1;
   else
     DebugLn('TCocoaWidgetSet.GetSystemMetrics TODO ', DbgS(NIndex));;
   end;

@@ -36,6 +36,12 @@ Type
       Msg: UInt; WParam: Windows.WParam; LParam: Windows.LParam;
       var MsgResult: Windows.LResult; var WinProcess: Boolean): Boolean;
 
+  TDrawItemHandlerProc = procedure (const AWinControl: TWinControl; Window: HWnd;
+      Msg: UInt; WParam: Windows.WParam; const DrawIS: TDrawItemStruct;
+      var ItemMsg: Integer; var DrawListItem: Boolean);
+
+  TGetClientOffsetProc = procedure (const AWinControl: TWinControl; var Rect: TRect);
+
   PWin32WindowInfo = ^TWin32WindowInfo;
   TWin32WindowInfo = record
     Overlay: HWND;           // overlay, transparent window on top, used by designer
@@ -62,6 +68,8 @@ Type
     isChildEdit: boolean;     // is buddy edit of a control
     ThemedCustomDraw: boolean;// controls needs themed drawing in wm_notify/nm_customdraw
     IMEComposed: Boolean;
+    DrawItemHandler: TDrawItemHandlerProc;
+    ClientOffsetProc: TGetClientOffsetProc;   // used by GetLCLClientBoundsOffset
     case integer of
       0: (spinValue: Double);
       1: (
@@ -160,15 +168,14 @@ var
   DefaultWindowInfo: TWin32WindowInfo;
   WindowInfoAtom: ATOM;
   ChangedMenus: TFPList; // list of HWNDs which menus needs to be redrawn
-  UnicodeEnabledOS: Boolean = False;
-
   WindowsVersion: TWindowsVersion = wvUnknown;
+  ComCtlVersion: Cardinal = 0; //initialized in Win32Extra
 
 
 implementation
 
 uses
-  LCLStrConsts, Dialogs, StdCtrls, ExtCtrls, ComCtrls,
+  LCLStrConsts, Dialogs, StdCtrls, ExtCtrls,
   LCLIntf; //remove this unit when GetWindowSize is moved to TWSWinControl
 
 {$IFOPT C-}
@@ -675,6 +682,7 @@ var
   Handle: HWND;
   TheWinControl: TWinControl absolute Sender;
   ARect: TRect;
+  Win32Info: PWin32WindowInfo;
 begin
   Result := False;
   if not (Sender is TWinControl) then exit;
@@ -713,7 +721,7 @@ begin
     // -> Adjust the position
     // add the upper frame with the caption
     DC := Windows.GetDC(Handle);
-    SelectObject(DC, TheWinControl.Font.Handle);
+    SelectObject(DC, TheWinControl.Font.Reference.Handle);
     Windows.GetTextMetrics(DC, TM);
     ORect.Top := TM.TMHeight + 3;
     Windows.ReleaseDC(Handle, DC);
@@ -722,14 +730,10 @@ begin
     ORect.Right := -2;
     ORect.Bottom := -2;
   end else
-  if TheWinControl is TCustomTabControl then
   begin
-    // Can't use complete client rect in win32 interface, top part contains the tabs
-    Windows.GetClientRect(Handle, @ARect);
-    ORect := ARect;
-    Windows.SendMessage(Handle, TCM_AdjustRect, 0, LPARAM(@ORect));
-    Dec(ORect.Right, ARect.Right);
-    Dec(ORect.Bottom, ARect.Bottom);
+    Win32Info:=GetWin32WindowInfo(Handle);
+    if Assigned(Win32Info^.ClientOffsetProc) then
+      Win32Info^.ClientOffsetProc(TheWinControl, ORect);
   end;
 {
   if (GetWindowLong(Handle, GWL_EXSTYLE) and WS_EX_CLIENTEDGE) <> 0 then
@@ -870,11 +874,22 @@ begin
     StayOnTopWindowsInfo^.StayOnTopList := TFPList.Create;
     WindowInfo := GetWin32WindowInfo(AppHandle);
     WindowInfo^.StayOnTopList := StayOnTopWindowsInfo^.StayOnTopList;
+    // EnumWindow() suggests the order from top-most to bottom windows
+    // EnumThreadWindoes() doesn't suggest the order, but assuming the same.
+    // See RestoreStayOnTopFlags
     EnumThreadWindows(GetWindowThreadProcessId(AppHandle, nil),
       @EnumStayOnTopRemove, LPARAM(StayOnTopWindowsInfo));
     for I := 0 to WindowInfo^.StayOnTopList.Count - 1 do
-      SetWindowPos(HWND(WindowInfo^.StayOnTopList[I]), HWND_NOTOPMOST, 0, 0, 0, 0,
+    begin
+      // Starting with Windows 7, setting HWND_NOTOPMOST keeps the window
+      // on top of another active window. So currently, the code sends
+      // the window to the very bottom and then restores it as "_TOP"
+      // to prevent the overlapping
+      SetWindowPos(HWND(WindowInfo^.StayOnTopList[I]), HWND_BOTTOM, 0, 0, 0, 0,
         SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE or SWP_NOOWNERZORDER or SWP_DRAWFRAME);
+      SetWindowPos(HWND(WindowInfo^.StayOnTopList[I]), HWND_TOP, 0, 0, 0, 0,
+        SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE or SWP_NOOWNERZORDER or SWP_DRAWFRAME);
+    end;
     Dispose(StayOnTopWindowsInfo);
   end;
   inc(InRemoveStayOnTopFlags);
@@ -891,7 +906,10 @@ begin
     WindowInfo := GetWin32WindowInfo(AppHandle);
     if WindowInfo^.StayOnTopList <> nil then
     begin
-      for I := 0 to WindowInfo^.StayOnTopList.Count - 1 do
+      // the order of the list is assumed to be
+      // from top to bottom, thus the restoration of the list
+      // should be from bottom to top as well
+      for I := WindowInfo^.StayOnTopList.Count - 1 downto 0  do
         SetWindowPos(HWND(WindowInfo^.StayOnTopList.Items[I]),
           HWND_TOPMOST, 0, 0, 0, 0,
           SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE or SWP_NOOWNERZORDER or SWP_DRAWFRAME);
@@ -1041,37 +1059,14 @@ end;
 function GetControlText(AHandle: HWND): string;
 var
   TextLen: dword;
-{$ifdef WindowsUnicodeSupport}
-  AnsiBuffer: string;
   WideBuffer: WideString;
-{$endif}  
 begin
-{$ifdef WindowsUnicodeSupport}
-  if UnicodeEnabledOS then
-  begin
-    TextLen := Windows.GetWindowTextLengthW(AHandle);
-    SetLength(WideBuffer, TextLen);
-    if TextLen > 0 // Never give Windows the chance to write to System.emptychar
-    then TextLen := Windows.GetWindowTextW(AHandle, PWideChar(WideBuffer), TextLen + 1);
-    SetLength(WideBuffer, TextLen);
-    Result := UTF16ToUTF8(WideBuffer);
-  end
-  else
-  begin
-    TextLen := Windows.GetWindowTextLength(AHandle);
-    SetLength(AnsiBuffer, TextLen);
-    if TextLen > 0 // Never give Windows the chance to write to System.emptychar
-    then TextLen := Windows.GetWindowText(AHandle, PTChar(AnsiBuffer), TextLen + 1);
-    SetLength(AnsiBuffer, TextLen);
-    Result := AnsiToUtf8(AnsiBuffer);
-  end;
-
- {$else}
-  TextLen := GetWindowTextLength(AHandle);
-  SetLength(Result, TextLen);
-  GetWindowText(AHandle, PChar(Result), TextLen + 1);
-
- {$endif}
+  TextLen := Windows.GetWindowTextLengthW(AHandle);
+  SetLength(WideBuffer, TextLen);
+  if TextLen > 0 // Never give Windows the chance to write to System.emptychar
+  then TextLen := Windows.GetWindowTextW(AHandle, PWideChar(WideBuffer), TextLen + 1);
+  SetLength(WideBuffer, TextLen);
+  Result := UTF16ToUTF8(WideBuffer);
 end;
 
 procedure FillRawImageDescriptionColors(var ADesc: TRawImageDescription);
@@ -1663,10 +1658,6 @@ begin
   DefaultWindowInfo.DrawItemIndex := -1;
   WindowInfoAtom := Windows.GlobalAddAtom('WindowInfo');
   ChangedMenus := TFPList.Create;
-
-  {$ifdef WindowsUnicodeSupport}
-  UnicodeEnabledOS := (Win32Platform = VER_PLATFORM_WIN32_NT);
-  {$endif}
   if WindowsVersion = wvUnknown then
     UpdateWindowsVersion;
 end;

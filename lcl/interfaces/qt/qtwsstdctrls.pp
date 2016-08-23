@@ -292,7 +292,6 @@ const
   );
 
 
-
 { TQtWSScrollBar }
 
 {------------------------------------------------------------------------------
@@ -367,15 +366,20 @@ begin
   QtScrollBar.BeginUpdate;
   try
     if (QtScrollBar.getMin <> AScrollBar.Min) or
-      (QtScrollBar.getMax <> AScrollbar.Max) then
-      QtScrollBar.setRange(AScrollBar.Min, AScrollBar.Max);
+      (QtScrollBar.getMax <> (AScrollbar.Max - AScrollBar.PageSize)) then
+      QtScrollBar.setRange(AScrollBar.Min, AScrollBar.Max - AScrollBar.PageSize);
     if QtScrollBar.getPageStep <> AScrollBar.PageSize then
     begin
       QtScrollBar.setPageStep(AScrollBar.PageSize);
       QtScrollBar.setSingleStep((AScrollBar.PageSize div 6) + 1);
     end;
     if QtScrollbar.getValue <> AScrollBar.Position then
-      QtScrollBar.setValue(AScrollBar.Position);
+    begin
+      if AScrollBar.Position > QtScrollBar.getMax then
+        QtScrollBar.setValue(QtScrollBar.getMax)
+      else
+        QtScrollBar.setValue(AScrollBar.Position);
+    end;
 
     case AScrollBar.Kind of
       sbHorizontal:
@@ -627,6 +631,8 @@ class procedure TQtWSCustomListBox.SetItemIndex(const ACustomListBox: TCustomLis
 begin
   if not WSCheckHandleAllocated(ACustomListBox, 'SetItemIndex') then
     Exit;
+  if TQtListWidget(ACustomListBox.Handle).currentRow <> AIndex then
+    TQtListWidget(ACustomListBox.Handle).clearSelection;
   TQtListWidget(ACustomListBox.Handle).setCurrentRow(AIndex);
 end;
 

@@ -135,7 +135,6 @@ type
     procedure AddToPalette; virtual;
     function CanBeCreatedInDesigner: boolean; virtual;
     function GetCreationClass: TComponentClass; virtual;
-    function IsTControl: boolean;
   public
     property ComponentClass: TComponentClass read FComponentClass;
     property OnGetCreationClass: TOnGetCreationClass read FOnGetCreationClass
@@ -246,9 +245,8 @@ type
     procedure EndUpdate;
     function IsUpdateLocked: boolean;
     procedure IncChangeStamp;
-    function IndexOfPageName(const APageName: string): integer;
-    function IndexOfPageWithName(const APageName: string): integer;
-    function GetPage(const APageName: string; aCaseSens: Boolean = False): TBaseComponentPage;
+    function IndexOfPageName(const APageName: string; ACaseSensitive: Boolean): integer;
+    function GetPage(const APageName: string; ACaseSensitive: Boolean=False): TBaseComponentPage;
     procedure AddComponent(NewComponent: TRegisteredComponent);
     procedure RemoveComponent(AComponent: TRegisteredComponent);
     function FindComponent(const CompClassName: string): TRegisteredComponent;
@@ -642,11 +640,6 @@ begin
     OnGetCreationClass(Self,Result);
 end;
 
-function TRegisteredComponent.IsTControl: boolean;
-begin
-  Result:=ComponentClass.InheritsFrom(TControl);
-end;
-
 { TBaseComponentPage }
 
 constructor TBaseComponentPage.Create(const ThePageName: string);
@@ -768,7 +761,7 @@ begin
   for UserPageI := 0 to fUserOrder.ComponentPages.Count-1 do
   begin
     PgName := fUserOrder.ComponentPages[UserPageI];
-    CurPgInd := IndexOfPageName(PgName);
+    CurPgInd := IndexOfPageName(PgName, True);
     if CurPgInd = -1 then begin
       // Create a new page
       {$IFDEF VerboseComponentPalette}
@@ -959,29 +952,27 @@ begin
   Inc(fChangeStamp);
 end;
 
-function TBaseComponentPalette.IndexOfPageName(const APageName: string): integer;
+function TBaseComponentPalette.IndexOfPageName(const APageName: string;
+  ACaseSensitive: Boolean): integer;
 begin
-  Result:=Pages.Count-1;         // Case sensitive search
-  while (Result>=0) and (Pages[Result].PageName <> APageName) do
-    dec(Result);
-end;
-
-function TBaseComponentPalette.IndexOfPageWithName(const APageName: string): integer;
-begin
-  Result:=Pages.Count-1;         // Case in-sensitive search
-  while (Result>=0) and (AnsiCompareText(Pages[Result].PageName,APageName)<>0) do
-    dec(Result);
+  Result:=Pages.Count-1;
+  if ACaseSensitive then
+  begin                          // Case sensitive search
+    while (Result>=0) and (Pages[Result].PageName <> APageName) do
+      dec(Result);
+  end
+  else begin                     // Case in-sensitive search
+    while (Result>=0) and (AnsiCompareText(Pages[Result].PageName,APageName)<>0) do
+      dec(Result);
+  end;
 end;
 
 function TBaseComponentPalette.GetPage(const APageName: string;
-  aCaseSens: Boolean = False): TBaseComponentPage;
+  ACaseSensitive: Boolean=False): TBaseComponentPage;
 var
   i: Integer;
 begin
-  if aCaseSens then
-    i:=IndexOfPageName(APageName)
-  else
-    i:=IndexOfPageWithName(APageName);
+  i:=IndexOfPageName(APageName, ACaseSensitive);
   if i>=0 then
     Result:=Pages[i]
   else
@@ -1084,7 +1075,7 @@ var
   i, Vote: Integer;
 begin
   Vote:=1;
-  if HideControls and AComponent.IsTControl then
+  if HideControls and AComponent.ComponentClass.InheritsFrom(TControl) then
     Dec(Vote);
   i:=FHandlers[cphtUpdateVisible].Count;
   while FHandlers[cphtUpdateVisible].NextDownIndex(i) do

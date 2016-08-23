@@ -104,6 +104,11 @@ begin
   Result := 0;
 end;
 
+function TWidgetSet.CreateBrushWithRadialGradient(const LogBrush: TLogRadialGradient): HBRUSH;
+begin
+  Result := 0;
+end;
+
 function TWidgetSet.CreateCaret(Handle : HWND; Bitmap : hBitmap; width, Height : Integer) : Boolean;
 begin
   Result := False;
@@ -1284,33 +1289,33 @@ function TWidgetSet.GradientFill(DC: HDC; Vertices: PTriVertex; NumVertices: Lon
 
   function GetTriangleBounds(const v1, v2, v3: TTriVertex): TRect;
   begin
-    with v1, Result do
+    with v1 do
     begin
-      Left := x;
-      Top := y;
-      BottomRight := TopLeft;
+      Result.Left := x;
+      Result.Top := y;
+      Result.BottomRight := Result.TopLeft;
     end;
-    with v2, Result do
+    with v2 do
     begin
-      if x < Left then
-        Left := x;
-      if x > Right then
-        Right := x;
-      if y < Top then
-        Top := y;
-      if y > Bottom then
-        Bottom := y;
+      if x < Result.Left then
+        Result.Left := x;
+      if x > Result.Right then
+        Result.Right := x;
+      if y < Result.Top then
+        Result.Top := y;
+      if y > Result.Bottom then
+        Result.Bottom := y;
     end;
-    with v3, Result do
+    with v3 do
     begin
-      if x < Left then
-        Left := x;
-      if x > Right then
-        Right := x;
-      if y < Top then
-        Top := y;
-      if y > Bottom then
-        Bottom := y;
+      if x < Result.Left then
+        Result.Left := x;
+      if x > Result.Right then
+        Result.Right := x;
+      if y < Result.Top then
+        Result.Top := y;
+      if y > Result.Bottom then
+        Result.Bottom := y;
     end;
   end;
 
@@ -1706,9 +1711,13 @@ function TWidgetSet.Pie(DC: HDC; x1, y1, x2, y2,
                         sx, sy, ex, ey: Integer): Boolean;
 var
   A1, A2: extended;
+  A2i: integer;
 begin
   Coords2Angles(x1, y1, x2-x1, y2-y1, sx, sy, ex, ey, A1, A2);
-  Result := RadialPie(DC, x1, y1, x2, y2, RoundToInt(A1), RoundToInt(A2));
+  A2i := RoundToInt(A2);
+  if A2i = 0 then
+    A2i := 5760;
+  Result := RadialPie(DC, x1, y1, x2, y2, RoundToInt(A1), A2i);
 end;
 
 function TWidgetSet.PolyBezier(DC: HDC; Points: PPoint; NumPts: Integer;

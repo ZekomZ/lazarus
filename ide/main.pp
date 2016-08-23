@@ -59,20 +59,20 @@ uses
   MemCheck,
 {$ENDIF}
   // fpc packages
-  Math, Classes, SysUtils, Process, TypInfo, types, strutils, AVL_Tree,
+  Math, Classes, SysUtils, TypInfo, types, strutils, AVL_Tree,
   // LCL
   LCLProc, LCLType, LCLIntf, LResources, ComCtrls, HelpIntfs, InterfaceBase,
-  Forms, Buttons, Menus, Controls, GraphType, Graphics, ExtCtrls, Dialogs,
+  Forms, Buttons, Menus, Controls, GraphType, Graphics, ExtCtrls, Dialogs, LclStrConsts,
   // CodeTools
   FileProcs, FindDeclarationTool, LinkScanner, BasicCodeTools, CodeToolsStructs,
   CodeToolManager, CodeCache, DefineTemplates, KeywordFuncLists, CodeTree,
-  StdCodeTools, ChooseClassSectionDlg,
+  StdCodeTools, CodeCreationDlg,
   // LazUtils
   // use lazutf8, lazfileutils and lazfilecache after FileProcs and FileUtil
   FileUtil, LazFileUtils, LazFileCache, LazUTF8, LazUTF8Classes, UTF8Process,
   LConvEncoding, Laz2_XMLCfg, LazLogger,
   // SynEdit
-  AllSynEdit, SynEditKeyCmds, SynEditMarks, SynEditHighlighter,
+  SynEdit, AllSynEdit, SynEditKeyCmds, SynEditMarks, SynEditHighlighter,
   // IDE interface
   IDEIntf, ObjectInspector, PropEdits, PropEditUtils,
   MacroIntf, IDECommands, IDEWindowIntf, ComponentReg,
@@ -93,7 +93,7 @@ uses
   // designer
   JITForms, ComponentPalette, ComponentList, CompPagesPopup, IdeCoolbarData,
   ObjInspExt, Designer, FormEditor, CustomFormEditor, lfmUnitResource,
-  ControlSelection, AnchorEditor, TabOrderDlg, MenuEditorForm,
+  ControlSelection, AnchorEditor, TabOrderDlg, MenuEditor,
   // LRT stuff
   Translations,
   // debugger
@@ -154,7 +154,7 @@ uses
   CleanDirDlg, CodeContextForm, AboutFrm, CompatibilityRestrictions,
   RestrictionBrowser, ProjectWizardDlg, IDECmdLine, IDEGuiCmdLine, CodeExplOpts,
   EditorMacroListViewer, SourceFileManager, EditorToolbarStatic,
-  IDEInstances,
+  IDEInstances, process,
   // main ide
   MainBar, MainIntf, MainBase;
 
@@ -184,15 +184,18 @@ type
     procedure HandleScreenRemoveForm(Sender: TObject; AForm: TCustomForm);
     procedure HandleRemoteControlTimer(Sender: TObject);
     procedure HandleSelectFrame(Sender: TObject; var AComponentClass: TComponentClass);
+    procedure ForwardKeyToObjectInspector(Sender: TObject; Key: TUTF8Char);
     procedure OIChangedTimerTimer(Sender: TObject);
     procedure LazInstancesStartNewInstance(const aFiles: TStrings;
-      var Result: TStartNewInstanceResult);
+      var Result: TStartNewInstanceResult; var outSourceWindowHandle: HWND);
+    procedure LazInstancesGetOpenedProjectFileName(var outProjectFileName: string);
   public
     // file menu
     procedure mnuNewUnitClicked(Sender: TObject);
     procedure mnuNewFormClicked(Sender: TObject);
     procedure mnuNewOtherClicked(Sender: TObject);
     procedure mnuOpenClicked(Sender: TObject);
+    procedure mnuOpenUnitClicked(Sender: TObject);
     procedure mnuOpenRecentClicked(Sender: TObject); override;
     procedure mnuRevertClicked(Sender: TObject);
     procedure mnuSaveClicked(Sender: TObject);
@@ -263,7 +266,7 @@ type
     procedure mnuSourceToggleCommentClicked(Sender: TObject);
     procedure mnuSourceEncloseBlockClicked(Sender: TObject);
     procedure mnuSourceEncloseInIFDEFClicked(Sender: TObject);
-    procedure mnuSourceCompleteCodeClicked(Sender: TObject);
+    procedure mnuSourceCompleteCodeInteractiveClicked(Sender: TObject);
     procedure mnuSourceUseUnitClicked(Sender: TObject);
     procedure mnuSourceSyntaxCheckClicked(Sender: TObject);
     procedure mnuSourceGuessUnclosedBlockClicked(Sender: TObject);
@@ -313,6 +316,7 @@ type
     procedure mnuCloseProjectClicked(Sender: TObject);
     procedure mnuSaveProjectClicked(Sender: TObject);
     procedure mnuSaveProjectAsClicked(Sender: TObject);
+    procedure mnuProjectResaveFormsWithI18n(Sender: TObject);
     procedure mnuPublishProjectClicked(Sender: TObject);
     procedure mnuProjectInspectorClicked(Sender: TObject);
     procedure mnuAddToProjectClicked(Sender: TObject);
@@ -321,7 +325,7 @@ type
     procedure mnuViewFormsClicked(Sender: TObject);
     procedure mnuViewProjectSourceClicked(Sender: TObject);
     procedure mnuProjectOptionsClicked(Sender: TObject);
-    procedure mnuBuildModeClicked(Sender: TObject);
+    procedure mnuBuildModeClicked(Sender: TObject); override;
 
     // run menu
     procedure mnuCompileProjectClicked(Sender: TObject);
@@ -330,6 +334,7 @@ type
     procedure mnuCleanUpAndBuildProjectClicked(Sender: TObject);
     procedure mnuBuildManyModesClicked(Sender: TObject);
     procedure mnuAbortBuildProjectClicked(Sender: TObject);
+    procedure mnuRunMenuRunWithoutDebugging(Sender: TObject);
     procedure mnuRunProjectClicked(Sender: TObject);
     procedure mnuPauseProjectClicked(Sender: TObject);
     procedure mnuShowExecutionPointClicked(Sender: TObject);
@@ -394,10 +399,10 @@ type
     procedure UpdatePackageCommands(Sender: TObject);
     // see pkgmanager.pas
 
-    procedure mnuChgBuildModeClicked(Sender: TObject);
     procedure ToolBarOptionsClick(Sender: TObject);
   private
     fBuilder: TLazarusBuilder;
+    fOIActivateLastRow: Boolean;
     function DoBuildLazarusSub(Flags: TBuildLazarusFlags): TModalResult;
     procedure ProjectOptionsHelper(AFilter: array of TAbstractIDEOptionsClass);
     // Global IDE events
@@ -503,8 +508,8 @@ type
     function OIOnPropertyHint(Sender: TObject; PointedRow: TOIPropertyGridRow;
        out AHint: string): boolean;
     procedure OIOnUpdateRestricted(Sender: TObject);
-    function OnPropHookGetMethodName(const Method: TMethod;
-                                     PropOwner: TObject): String;
+    function OnPropHookGetMethodName(const Method: TMethod; PropOwner: TObject;
+      OrigLookupRoot: TPersistent): String;
     procedure OnPropHookGetMethods(TypeData: PTypeData; Proc:TGetStrProc);
     procedure OnPropHookGetCompatibleMethods(InstProp: PInstProp;
                                              const Proc:TGetStrProc);
@@ -526,7 +531,7 @@ type
                                            APersistentClass: TPersistentClass;
                                            AParent: TPersistent): boolean;
     procedure OnPropHookComponentRenamed(AComponent: TComponent);
-    procedure OnPropHookModified(Sender: TObject);
+    procedure OnPropHookModified(Sender: TObject; PropName: ShortString);
     procedure OnPropHookPersistentAdded(APersistent: TPersistent;
                                         Select: boolean);
     procedure OnPropHookPersistentDeleting(APersistent: TPersistent);
@@ -645,7 +650,6 @@ type
     FFixingGlobalComponentLock: integer;
     OldCompilerFilename, OldLanguage: String;
     OIChangedTimer: TIdleTimer;
-
     procedure DoDropFilesAsync(Data: PtrInt);
     procedure RenameInheritedMethods(AnUnitInfo: TUnitInfo; List: TStrings);
     function OIHelpProvider: TAbstractIDEHTMLProvider;
@@ -721,6 +725,7 @@ type
     function DoResetToolStatus(AFlags: TResetToolFlags): boolean; override;
 
     // files/units
+    function DoAddUnitToProject(AEditor: TSourceEditorInterface): TModalResult; override;
     function DoNewFile(NewFileDescriptor: TProjectFileDescriptor;
         var NewFilename: string; NewSource: string;
         NewFlags: TNewFlags; NewOwner: TObject): TModalResult; override;
@@ -800,7 +805,8 @@ type
     procedure DoCompile;
     procedure DoQuickCompile;
     function DoInitProjectRun: TModalResult; override;
-    function DoRunProject: TModalResult;
+    function DoRunProject: TModalResult; override;
+    function DoRunProjectWithoutDebug: TModalResult; override;
     function DoSaveProjectToTestDirectory(Flags: TSaveFlags): TModalResult;
     function QuitIDE: boolean;
 
@@ -817,10 +823,10 @@ type
     function DoExampleManager: TModalResult; override;
     function DoBuildLazarus(Flags: TBuildLazarusFlags): TModalResult; override;
     function DoBuildAdvancedLazarus(ProfileNames: TStringList): TModalResult;
-    function DoBuildFile({%H-}ShowAbort: Boolean): TModalResult;
-    function DoRunFile: TModalResult;
-    function DoConfigBuildFile: TModalResult;
-    function GetIDEDirectives(AnUnitInfo: TUnitInfo;
+    function DoBuildFile({%H-}ShowAbort: Boolean; Filename: string = ''): TModalResult; override;
+    function DoRunFile(Filename: string = ''): TModalResult; override;
+    function DoConfigureBuildFile: TModalResult; override;
+    function GetIDEDirectives(aFilename: string;
                               DirectiveList: TStrings): TModalResult;
     function FilterIDEDirective(Tool: TStandardCodeTool;
                                 StartPos, {%H-}EndPos: integer): boolean;
@@ -838,6 +844,7 @@ type
                              LoadForm: boolean): TIDesigner; override;
     function GetDesignerFormOfSource(AnUnitInfo: TUnitInfo;
                                      LoadForm: boolean): TCustomForm;
+    function GetUnitFileOfLFM(LFMFilename: string): string;
     function GetProjectFileWithRootComponent(AComponent: TComponent): TLazProjectFile; override;
     function GetProjectFileWithDesigner(ADesigner: TIDesigner): TLazProjectFile; override;
     procedure GetObjectInspectorUnit(
@@ -893,11 +900,11 @@ type
     function DoShowAbstractMethods: TModalResult;
     function DoRemoveEmptyMethods: TModalResult;
     function DoRemoveUnusedUnits: TModalResult;
-    function DoUseUnit: TModalResult;
+    function DoUseUnitDlg(DlgType: TUseUnitDialogType): TModalResult;
     function DoFindOverloads: TModalResult;
     function DoInitIdentCompletion(JumpToError: boolean): boolean;
     function DoShowCodeContext(JumpToError: boolean): boolean;
-    procedure DoCompleteCodeAtCursor;
+    procedure DoCompleteCodeAtCursor(Interactive: Boolean);
     procedure DoExtractProcFromSelection;
     function DoCheckSyntax: TModalResult;
     procedure DoGoToPascalBlockOtherEnd;
@@ -1059,7 +1066,7 @@ begin
     HelpLang := GetLanguageSpecified;
     if HelpLang = '' then
     begin
-      ConfFileName:=TrimFilename(SetDirSeparators(GetPrimaryConfigPath+'/'+EnvOptsConfFileName));
+      ConfFileName:=TrimFilename(AppendPathDelim(GetPrimaryConfigPath)+EnvOptsConfFileName);
       try
         Cfg:=TXMLConfig.Create(ConfFileName);
         try
@@ -1070,8 +1077,7 @@ begin
       except
       end;
     end;
-    if HelpLang<>'' then
-      TranslateResourceStrings(ProgramDirectory(true), HelpLang);
+    TranslateResourceStrings(ProgramDirectory(true), HelpLang);
 
     AHelp := TStringList.Create;
     AddHelp([lislazarusOptionsProjectFilename]);
@@ -1140,9 +1146,11 @@ begin
   ParseGuiCmdLineParams(SkipAutoLoadingLastProject, StartedByStartLazarus,
     EnableRemoteControl, ShowSplashScreen, ShowSetupDialog);
 
-  DebugLn('TMainIDE.ParseCmdLineOptions:');
-  Debugln('  PrimaryConfigPath="',GetPrimaryConfigPath,'"');
-  Debugln('  SecondaryConfigPath="',GetSecondaryConfigPath,'"');
+  if ConsoleVerbosity>=0 then
+  begin
+    Debugln('Hint: (lazarus) [TMainIDE.ParseCmdLineOptions] PrimaryConfigPath="',GetPrimaryConfigPath,'"');
+    Debugln('Hint: (lazarus) [TMainIDE.ParseCmdLineOptions] SecondaryConfigPath="',GetSecondaryConfigPath,'"');
+  end;
 end;
 
 procedure TMainIDE.LoadGlobalOptions;
@@ -1204,13 +1212,13 @@ begin
   // read language and lazarusdir paramters, needed for translation
   if Application.HasOption('language') then
   begin
-    debugln('TMainIDE.LoadGlobalOptions overriding language with command line: ',
+    debugln('Hint: (lazarus) [TMainIDE.LoadGlobalOptions] overriding language with command line: ',
       Application.GetOptionValue('language'));
     EnvironmentOptions.LanguageID := Application.GetOptionValue('language');
   end;
   if Application.HasOption('lazarusdir') then
   begin
-    debugln('TMainIDE.LoadGlobalOptions overriding Lazarusdir with command line: ',
+    debugln('Hint: (lazarus) [TMainIDE.LoadGlobalOptions] overriding Lazarusdir with command line: ',
       Application.GetOptionValue('lazarusdir'));
     EnvironmentOptions.Lazarusdirectory:= Application.GetOptionValue('lazarusdir');
   end;
@@ -1250,10 +1258,10 @@ begin
     // => either the user forgot to pass a --pcp
     //    or the user uninstalled and installed to another directory
     // => warn
-    debugln(['TMainIDE.LoadGlobalOptions ']);
-    debugln(['  LastCalled="',LastCalled,'"']);
-    debugln(['  CurPrgName="',CurPrgName,'"']);
-    debugln(['  AltPrgName="',AltPrgName,'"']);
+    debugln(['Hint: (lazarus) [TMainIDE.LoadGlobalOptions]']);
+    debugln(['Hint: (lazarus) LastCalled="',LastCalled,'"']);
+    debugln(['Hint: (lazarus) CurPrgName="',CurPrgName,'"']);
+    debugln(['Hint: (lazarus) AltPrgName="',AltPrgName,'"']);
     MsgResult := IDEQuestionDialog(lisIncorrectConfigurationDirectoryFound,
         SimpleFormat(lisIDEConficurationFoundMayBelongToOtherLazarus,
         [LineEnding, GetSecondConfDirWarning, GetPrimaryConfigPath,
@@ -1310,6 +1318,7 @@ begin
   LoadFileDialogFilter;
 
   EditorOpts := TEditorOptions.Create;
+  IDEEditorOptions := EditorOpts;
   EditorOpts.OnBeforeRead := @DoEditorOptionsBeforeRead;
   EditorOpts.OnAfterWrite := @DoEditorOptionsAfterWrite;
   SetupIDECommands;
@@ -1352,6 +1361,7 @@ var
   CfgCache: TFPCTargetConfigCache;
   OldLazDir: String;
   Note: string;
+  OI: TSimpleWindowLayout;
 begin
   {$IFDEF DebugSearchFPCSrcThread}
   ShowSetupDialog:=true;
@@ -1361,7 +1371,7 @@ begin
   if (not ShowSetupDialog)
   and (CheckLazarusDirectoryQuality(EnvironmentOptions.GetParsedLazarusDirectory,Note)<>sddqCompatible)
   then begin
-    debugln(['Warning: incompatible Lazarus directory: ',EnvironmentOptions.GetParsedLazarusDirectory]);
+    debugln(['Warning: (lazarus) incompatible Lazarus directory: ',EnvironmentOptions.GetParsedLazarusDirectory]);
     ShowSetupDialog:=true;
   end;
 
@@ -1370,7 +1380,7 @@ begin
   and (CheckCompilerQuality(EnvironmentOptions.GetParsedCompilerFilename,Note,
                        CodeToolBoss.FPCDefinesCache.TestFilename)=sddqInvalid)
   then begin
-    debugln(['Warning: invalid compiler: ',EnvironmentOptions.GetParsedCompilerFilename]);
+    debugln(['Warning: (lazarus) invalid compiler: ',EnvironmentOptions.GetParsedCompilerFilename]);
     ShowSetupDialog:=true;
   end;
 
@@ -1382,7 +1392,7 @@ begin
     if CheckFPCSrcDirQuality(EnvironmentOptions.GetParsedFPCSourceDirectory,Note,
       CfgCache.GetFPCVer)=sddqInvalid
     then begin
-      debugln(['Warning: invalid fpc source directory: ',EnvironmentOptions.GetParsedFPCSourceDirectory]);
+      debugln(['Warning: (lazarus) invalid fpc source directory: ',EnvironmentOptions.GetParsedFPCSourceDirectory]);
       ShowSetupDialog:=true;
     end;
   end;
@@ -1393,7 +1403,15 @@ begin
       or (EnvironmentOptions.DebuggerConfig.DebuggerClass='TGDBMIDebugger'))
   and (CheckDebuggerQuality(EnvironmentOptions.GetParsedDebuggerFilename, Note)<>sddqCompatible)
   then begin
-    debugln(['Warning: missing GDB exe',EnvironmentOptions.GetParsedLazarusDirectory]);
+    debugln(['Warning: (lazarus) missing GDB exe',EnvironmentOptions.GetParsedLazarusDirectory]);
+    ShowSetupDialog:=true;
+  end;
+
+  // check 'make' utility
+  if (not ShowSetupDialog)
+  and (CheckMakeExeQuality(EnvironmentOptions.GetParsedMakeFilename,Note)<>sddqCompatible)
+  then begin
+    debugln(['Warning: (lazarus) incompatible make utility: ',EnvironmentOptions.GetParsedMakeFilename]);
     ShowSetupDialog:=true;
   end;
 
@@ -1404,6 +1422,10 @@ begin
       Application.Terminate;
       exit;
     end;
+    // show OI with empty configuration
+    OI := IDEWindowIntf.IDEWindowCreators.SimpleLayoutStorage.ItemByFormID(DefaultObjectInspectorName);
+    if OI<>nil then
+      OI.Visible := True;
     EnvironmentOptions.Save(true);
     if OldLazDir<>EnvironmentOptions.LazarusDirectory then begin
       // fetch new translations
@@ -1564,6 +1586,7 @@ begin
   MainIDEBar.SetupHints;
   SetupIDEWindowsLayout;
   RestoreIDEWindows;
+  MainIDEBar.InitPaletteAndCoolBar;
   IDEWindowCreators.AddLayoutChangedHandler(@HandleLayoutChanged);
   // make sure the main IDE bar is always shown
   IDEWindowCreators.ShowForm(MainIDEBar,false);
@@ -1573,11 +1596,10 @@ begin
     Application.Terminate;
     exit;
   end;
-  DoShowMessagesView(false);           // reopen extra windows
   fUserInputSinceLastIdle:=true; // Idle work gets done initially before user action.
   MainIDEBar.ApplicationIsActivate:=true;
   IDECommandList.AddCustomUpdateEvent(@UpdateMainIDECommands);
-  LazIDEInstances.StartListening(@LazInstancesStartNewInstance);
+  LazIDEInstances.StartListening(@LazInstancesStartNewInstance, @LazInstancesGetOpenedProjectFileName);
   IDECommandList.StartUpdateEvents;
   FIDEStarted:=true;
   {$IFDEF IDE_MEM_CHECK}CheckHeapWrtMemCnt('TMainIDE.StartIDE END');{$ENDIF}
@@ -1592,7 +1614,8 @@ begin
   if Assigned(ExternalTools) then
     ExternalTools.TerminateAll;
 
-  DebugLn('[TMainIDE.Destroy] A ');
+  if ConsoleVerbosity>0 then
+    DebugLn('Hint: (lazarus) [TMainIDE.Destroy]');
 
   {$IFDEF IDE_MEM_CHECK}CheckHeapWrtMemCnt('TMainIDE.Destroy A ');{$ENDIF}
   if Assigned(MainIDEBar) then begin
@@ -1665,7 +1688,8 @@ begin
   // free control selection
   FreeThenNil(TheControlSelection);
 
-  DebugLn('[TMainIDE.Destroy] B  -> inherited Destroy... ',ClassName);
+  if ConsoleVerbosity>=0 then
+    DebugLn('Hint: (lazarus) [TMainIDE.Destroy] B  -> inherited Destroy... ',ClassName);
   {$IFDEF IDE_MEM_CHECK}CheckHeapWrtMemCnt('TMainIDE.Destroy B ');{$ENDIF}
   FreeThenNil(MainBuildBoss);
   inherited Destroy;
@@ -1673,7 +1697,8 @@ begin
 
   FreeThenNil(IDEProtocolOpts);
   FreeThenNil(fBuilder);
-  DebugLn('[TMainIDE.Destroy] END');
+  if ConsoleVerbosity>=0 then
+    DebugLn('Hint: (lazarus) [TMainIDE.Destroy] END');
 end;
 
 procedure TMainIDE.CreateOftenUsedForms;
@@ -1809,8 +1834,10 @@ begin
     (Sender as TObjectInspectorDlg).RestrictedProps := GetRestrictedProperties;
 end;
 
-function TMainIDE.OnPropHookGetMethodName(const Method: TMethod;
-  PropOwner: TObject): String;
+function TMainIDE.OnPropHookGetMethodName(const Method: TMethod; PropOwner: TObject;
+  OrigLookupRoot: TPersistent): String;
+// OrigLookupRoot can be different from the PropOwner's LookupRoot when we refer
+//  to an object (eg. TAction) in another form / unit.
 var
   JITMethod: TJITMethod;
   LookupRoot: TPersistent;
@@ -1822,16 +1849,17 @@ begin
         Result:='<Unpublished>';
     end else
       Result:='<No LookupRoot>';
-  end else if IsJITMethod(Method) then begin
+  end
+  else if IsJITMethod(Method) then begin
     JITMethod:=TJITMethod(Method.Data);
     Result:=JITMethod.TheMethodName;
     if PropOwner is TComponent then begin
       LookupRoot:=GetLookupRootForComponent(TComponent(PropOwner));
       if LookupRoot is TComponent then begin
         //DebugLn(['TMainIDE.OnPropHookGetMethodName ',Result,' GlobalDesignHook.LookupRoot=',dbgsName(GlobalDesignHook.LookupRoot),' JITMethod.TheClass=',dbgsName(JITMethod.TheClass),' PropOwner=',DbgSName(PropOwner),' PropOwner-LookupRoot=',DbgSName(LookupRoot)]);
-        if (LookupRoot.ClassType<>JITMethod.TheClass) then begin
+        if (LookupRoot.ClassType<>JITMethod.TheClass)
+        or (LookupRoot<>OrigLookupRoot) then
           Result:=JITMethod.TheClass.ClassName+'.'+Result;
-        end;
       end;
     end;
   end else
@@ -2186,13 +2214,13 @@ procedure TMainIDE.SetupStartProject;
 
   function AskIfLoadLastFailingProject: boolean;
   begin
-    debugln(['AskIfLoadLastFailingProject START']);
+    debugln(['Hint: (lazarus) AskIfLoadLastFailingProject START']);
     Result:=IDEQuestionDialog(lisOpenProject2,
       Format(lisAnErrorOccuredAtLastStartupWhileLoadingLoadThisPro,
              [EnvironmentOptions.LastSavedProjectFile, LineEnding+LineEnding]),
       mtWarning,
       [mrYes, lisOpenProjectAgain, mrNoToAll, lisStartWithANewProject])=mrYes;
-    debugln(['AskIfLoadLastFailingProject END ',dbgs(Result)]);
+    debugln(['Hint: (lazarus) AskIfLoadLastFailingProject END ',dbgs(Result)]);
   end;
 
 var
@@ -2228,11 +2256,19 @@ begin
   end;
 
   // try loading last project if lazarus didn't fail last time
+  {debugln(['TMainIDE.SetupStartProject ProjectLoaded=',ProjectLoaded,
+    ' SkipAutoLoadingLastProject=',SkipAutoLoadingLastProject,
+    ' EnvironmentOptions.OpenLastProjectAtStart=',EnvironmentOptions.OpenLastProjectAtStart,
+    ' EnvironmentOptions.LastSavedProjectFile="',EnvironmentOptions.LastSavedProjectFile,'"',
+    ' RestoreProjectClosed=',RestoreProjectClosed,
+    ' FileExistsCached(EnvironmentOptions.LastSavedProjectFile)=',FileExistsCached(EnvironmentOptions.LastSavedProjectFile)
+    ]);}
   if (not ProjectLoaded)
-  and (LazIDEInstances.AllowOpenLastProject)
   and (not SkipAutoLoadingLastProject)
   and (EnvironmentOptions.OpenLastProjectAtStart)
   and (EnvironmentOptions.LastSavedProjectFile<>'')
+  and ((EnvironmentOptions.MultipleInstances=mioAlwaysStartNew)
+    or (not LazIDEInstances.ProjectIsOpenInAnotherInstance(EnvironmentOptions.LastSavedProjectFile)))
   and (EnvironmentOptions.LastSavedProjectFile<>RestoreProjectClosed)
   and (FileExistsCached(EnvironmentOptions.LastSavedProjectFile))
   then begin
@@ -2289,7 +2325,7 @@ begin
     Begin
       AFilename:=CleanAndExpandFilename(CmdLineFiles.Strings[i]);
       if not FileExistsCached(AFilename) then begin
-        debugln(['WARNING: command line file not found: "',AFilename,'"']);
+        debugln(['Warning: (lazarus) command line file not found: "',AFilename,'"']);
         continue;
       end;
       if Project1=nil then begin
@@ -2325,7 +2361,8 @@ procedure TMainIDE.SetupRemoteControl;
 var
   Filename: String;
 begin
-  debugln(['TMainIDE.SetupRemoteControl ']);
+  if ConsoleVerbosity>=0 then
+    debugln(['TMainIDE.SetupRemoteControl ']);
   // delete old remote commands
   Filename:=GetRemoteControlFilename;
   if FileExistsUTF8(Filename) then
@@ -2388,7 +2425,7 @@ begin
     AForm:=Screen.CustomForms[i];
     if (AForm<>MainIDEBar)
     and ((AForm.Owner=MainIDEBar) or (AForm.Owner=Self)) then begin
-      DebugLn(['TMainIDE.FreeIDEWindows ',dbgsName(AForm)]);
+      DebugLn(['Hint: (lazarus) [TMainIDE.FreeIDEWindows] ',dbgsName(AForm)]);
       AForm.Free;
     end;
     i:=Math.Min(i,Screen.CustomFormCount)-1;
@@ -2403,7 +2440,7 @@ begin
   for i:=0 to Screen.CustomFormCount-1 do begin
     AForm:=Screen.CustomForms[i];
     if AForm=MainIDEBar then continue;
-    if AForm.Designer<>nil then continue;
+    if IsFormDesign(AForm) then continue;
     if AForm.Parent<>nil then continue;
     if not AForm.CloseQuery then exit(false);
   end;
@@ -2414,19 +2451,51 @@ function TMainIDE.GetActiveDesignerSkipMainBar: TComponentEditorDesigner;
 // returns the designer that is currently active
 // the MainIDEBar is ignored
 var
-  ActForm: TCustomForm;
+  ActForm, ActParentForm: TCustomForm;
   ActControl: TWinControl;
+
+  function TryGetDesignerFromForm(AForm: TCustomForm;
+    out ADesigner: TComponentEditorDesigner): Boolean;
+  begin
+    if Assigned(IDETabMaster) and (AForm is TSourceEditorWindowInterface)
+      and (IDETabMaster.TabDisplayState=tdsDesign)
+    then
+      ADesigner := TComponentEditorDesigner(TSourceEditorWindowInterface(AForm).
+        ActiveEditor.GetDesigner(True))
+    else
+      ADesigner := nil;
+
+    Result := ADesigner <> nil;
+  end;
+
 begin
   ActForm:=Screen.ActiveCustomForm;
-  if ActForm=MainIDEBar then
+
+  if ActForm = nil then
+    Exit(nil);
+
+  if TryGetDesignerFromForm(ActForm, Result) then
+    Exit; // docked design form has focus (inside SourceEditorWindow)
+
+  ActControl:=ActForm.ActiveControl;
+  if ActControl<>nil then
   begin
-    ActControl:=ActForm.ActiveControl;
-    if (ActControl<>nil) and (GetFirstParentForm(ActControl)<>MainIDEBar) then
-      exit(nil); // a docked form has focus
-    if Screen.CustomFormZOrderCount < 2 then exit(nil);
-    ActForm:=Screen.CustomFormsZOrdered[1];
+    ActParentForm := GetFirstParentForm(ActControl);
+    if TryGetDesignerFromForm(ActParentForm, Result) then
+      Exit; // docked design form has focus (inside docked SourceEditorWindow)
+
+    if ActForm=MainIDEBar then
+      if (ActParentForm<>MainIDEBar) then
+        Exit(nil); // a docked form has focus
   end;
-  if (ActForm<>nil) and (ActForm.Designer is TComponentEditorDesigner) then
+
+  if ActForm=MainIDEBar then
+    if Screen.CustomFormZOrderCount < 2 then
+      Exit(nil)
+    else
+      ActForm:=Screen.CustomFormsZOrdered[1];
+
+  if (ActForm.Designer is TComponentEditorDesigner) then
     Result := TComponentEditorDesigner(ActForm.Designer)
   else
     Result := nil;
@@ -2503,6 +2572,7 @@ begin
     itmFileNewForm.OnClick := @mnuNewFormClicked;
     itmFileNewOther.OnClick := @mnuNewOtherClicked;
     itmFileOpen.OnClick := @mnuOpenClicked;
+    itmFileOpenUnit.OnClick := @mnuOpenUnitClicked;
     itmFileRevert.OnClick := @mnuRevertClicked;
     SetRecentFilesMenu;
     itmFileSave.OnClick := @mnuSaveClicked;
@@ -2591,7 +2661,7 @@ begin
     itmSourceToggleComment.OnClick:=@mnuSourceToggleCommentClicked;
     itmSourceEncloseBlock.OnClick:=@mnuSourceEncloseBlockClicked;
     itmSourceEncloseInIFDEF.OnClick:=@mnuSourceEncloseInIFDEFClicked;
-    itmSourceCompleteCode.OnClick:=@mnuSourceCompleteCodeClicked;
+    itmSourceCompleteCodeInteractive.OnClick:=@mnuSourceCompleteCodeInteractiveClicked;
     itmSourceUseUnit.OnClick:=@mnuSourceUseUnitClicked;
     // CodeTool Checks
     itmSourceSyntaxCheck.OnClick := @mnuSourceSyntaxCheckClicked;
@@ -2650,6 +2720,7 @@ begin
     itmProjectClose.OnClick := @mnuCloseProjectClicked;
     itmProjectSave.OnClick := @mnuSaveProjectClicked;
     itmProjectSaveAs.OnClick := @mnuSaveProjectAsClicked;
+    itmProjectResaveFormsWithI18n.OnClick := @mnuProjectResaveFormsWithI18n;
     itmProjectPublish.OnClick := @mnuPublishProjectClicked;
     itmProjectInspector.OnClick := @mnuProjectInspectorClicked;
     itmProjectOptions.OnClick := @mnuProjectOptionsClicked;
@@ -2658,7 +2729,6 @@ begin
     itmProjectViewUnits.OnClick := @mnuViewUnitsClicked;
     itmProjectViewForms.OnClick := @mnuViewFormsClicked;
     itmProjectViewSource.OnClick := @mnuViewProjectSourceClicked;
-    itmProjectBuildMode.OnClick := @mnuBuildModeClicked;
   end;
 end;
 
@@ -2672,6 +2742,7 @@ begin
     itmRunMenuCleanUpAndBuild.OnClick := @mnuCleanUpAndBuildProjectClicked;
     itmRunMenuBuildManyModes.OnClick := @mnuBuildManyModesClicked;
     itmRunMenuAbortBuild.OnClick := @mnuAbortBuildProjectClicked;
+    itmRunMenuRunWithoutDebugging.OnClick := @mnuRunMenuRunWithoutDebugging;
     itmRunMenuRun.OnClick := @mnuRunProjectClicked;
     itmRunMenuPause.OnClick := @mnuPauseProjectClicked;
     itmRunMenuShowExecutionPoint.OnClick := @mnuShowExecutionPointClicked;
@@ -2926,6 +2997,11 @@ begin
   end;
 end;
 
+procedure TMainIDE.mnuOpenUnitClicked(Sender: TObject);
+begin
+  DoSourceEditorCommand(ecOpenUnit);
+end;
+
 procedure TMainIDE.mnuRevertClicked(Sender: TObject);
 begin
   if (SourceEditorManager.ActiveSourceWindowIndex < 0)
@@ -3164,6 +3240,7 @@ begin
         mnuSaveClicked(Self);
     end;
   ecOpen:                     mnuOpenClicked(Self);
+  ecOpenUnit:                 DoUseUnitDlg(udOpenUnit);
   ecSaveAll:                  DoSaveAll([sfCheckAmbiguousFiles]);
   ecQuit:                     mnuQuitClicked(Self);
   ecCompile:
@@ -3192,7 +3269,7 @@ begin
       end;
     end;
   ecDetach:                   DebugBoss.Detach;
-  ecBuild:                    DoBuildProject(crBuild, [pbfCleanCompile]);
+  ecBuild:                    DoBuildProject(crBuild, []);
   ecCleanUpAndBuild:          mnuCleanUpAndBuildProjectClicked(nil);
   ecQuickCompile:             DoQuickCompile;
   ecAbortBuild:               DoAbortBuild(false);
@@ -3210,12 +3287,13 @@ begin
   ecShowAbstractMethods:      DoShowAbstractMethods;
   ecRemoveEmptyMethods:       DoRemoveEmptyMethods;
   ecRemoveUnusedUnits:        DoRemoveUnusedUnits;
-  ecUseUnit:                  DoUseUnit;
+  ecUseUnit:                  DoUseUnitDlg(udUseUnit);
   ecFindOverloads:            DoFindOverloads;
   ecFindBlockOtherEnd:        DoGoToPascalBlockOtherEnd;
   ecFindBlockStart:           DoGoToPascalBlockStart;
   ecGotoIncludeDirective:     DoGotoIncludeDirective;
-  ecCompleteCode:             DoCompleteCodeAtCursor;
+  ecCompleteCode:             DoCompleteCodeAtCursor(False);
+  ecCompleteCodeInteractive:  DoCompleteCodeAtCursor(True);
   ecExtractProc:              DoExtractProcFromSelection;
   // user used shortcut/menu item to show the window, so focusing is ok.
   ecToggleMessages:           DoShowMessagesView;
@@ -3407,10 +3485,16 @@ begin
     OnViewLFM:=@OnDesignerViewLFM;
     OnSaveAsXML:=@OnDesignerSaveAsXML;
     OnShowObjectInspector:=@OnDesignerShowObjectInspector;
+    OnForwardKeyToObjectInspector:=@ForwardKeyToObjectInspector;
     OnShowAnchorEditor:=@OnDesignerShowAnchorEditor;
     OnShowTabOrderEditor:=@OnDesignerShowTabOrderEditor;
+    if Assigned(ObjectInspector1) then
+    begin
+      OnHasParentCandidates:=@ObjectInspector1.HasParentCandidates;
+      OnChangeParent:=@ObjectInspector1.ChangeParent;
+    end;
     ShowEditorHints:=EnvironmentOptions.ShowEditorHints;
-    ShowComponentCaptions := EnvironmentOptions.ShowComponentCaptions;
+    ShowComponentCaptions:=EnvironmentOptions.ShowComponentCaptions;
   end;
   if AnUnitInfo<>nil then
     AnUnitInfo.LoadedDesigner:=true;
@@ -3484,7 +3568,7 @@ begin
   inherited SetToolStatus(AValue);
   if DebugBoss <> nil then
     DebugBoss.UpdateButtonsAndMenuItems;
-  if Assigned(MainIDEBar) then
+  if Assigned(MainIDEBar) and not IDEIsClosing then
     MainIDEBar.AllowCompilation(ToolStatus <> itBuilder); // Disable some GUI controls while compiling.
   if FWaitForClose and (ToolStatus = itNone) then
   begin
@@ -3567,13 +3651,12 @@ procedure TMainIDE.UpdateEditorCommands(Sender: TObject);
 var
   ASrcEdit: TSourceEditor;
   AnUnitInfo: TUnitInfo;
-  Editable: Boolean;
-  SelAvail: Boolean;
-  SelEditable: Boolean;
-  SrcEditorActive, DsgEditorActive, StringFound, IdentFound: Boolean;
+  Editable, SelEditable: Boolean;
+  SelAvail, DesignerCanCopy: Boolean;
+  SrcEditorActive, DsgEditorActive: Boolean;
+  IdentFound, StringFound: Boolean;
   ActiveDesigner: TComponentEditorDesigner;
-  xAttr: TSynHighlighterAttributes;
-  xToken, CurWordAtCursor: string;
+  CurWordAtCursor: string;
 begin
   GetCurrentUnit(ASrcEdit, AnUnitInfo);
   if not UpdateEditorCommandsStamp.Changed(ASrcEdit, DisplayState) then
@@ -3586,26 +3669,25 @@ begin
   DsgEditorActive := DisplayState = dsForm;
   ActiveDesigner := GetActiveDesignerSkipMainBar;
 
-  StringFound := False;
-  IdentFound := False;
-  CurWordAtCursor := '';
   if ASrcEdit<>nil then
   begin
     CurWordAtCursor := ASrcEdit.GetWordAtCurrentCaret;
     //it is faster to get information from SynEdit than from CodeTools
-    if ASrcEdit.EditorComponent.GetHighlighterAttriAtRowCol(ASrcEdit.EditorComponent.CaretXY, xToken, xAttr) then
-    begin
-      StringFound := xAttr = ASrcEdit.EditorComponent.Highlighter.StringAttribute;
-      IdentFound := xAttr = ASrcEdit.EditorComponent.Highlighter.IdentifierAttribute;
-    end;
+    ASrcEdit.EditorComponent.CaretAtIdentOrString(ASrcEdit.EditorComponent.CaretXY, IdentFound, StringFound);
+  end
+  else begin
+    CurWordAtCursor := '';
+    IdentFound := False;
+    StringFound := False;
   end;
 
   if Assigned(ActiveDesigner) then
   begin
     IDECommandList.FindIDECommand(ecUndo).Enabled := DsgEditorActive and ActiveDesigner.CanUndo; {and not ActiveDesigner.ReadOnly}
     IDECommandList.FindIDECommand(ecRedo).Enabled := DsgEditorActive and ActiveDesigner.CanRedo; {and not ActiveDesigner.ReadOnly}
-    IDECommandList.FindIDECommand(ecCut).Enabled := ActiveDesigner.CanCopy;
-    IDECommandList.FindIDECommand(ecCopy).Enabled := ActiveDesigner.CanCopy;
+    DesignerCanCopy := ActiveDesigner.CanCopy;
+    IDECommandList.FindIDECommand(ecCut).Enabled := DesignerCanCopy;
+    IDECommandList.FindIDECommand(ecCopy).Enabled := DesignerCanCopy;
     IDECommandList.FindIDECommand(ecPaste).Enabled := ActiveDesigner.CanPaste;
     IDECommandList.FindIDECommand(ecSelectAll).Enabled := Assigned(ActiveDesigner.Form) and (ActiveDesigner.Form.ComponentCount>0);
   end
@@ -3645,13 +3727,17 @@ begin
   IDECommandList.FindIDECommand(ecInsertCVSRevision).Enabled := Editable;
   IDECommandList.FindIDECommand(ecInsertCVSSource).Enabled := Editable;
   IDECommandList.FindIDECommand(ecInsertGPLNotice).Enabled := Editable;
-  IDECommandList.FindIDECommand(ecInsertGPLNoticeTranslated).Visible := Editable and (EnglishGPLNotice<>lisGPLNotice);
+  IDECommandList.FindIDECommand(ecInsertGPLNoticeTranslated).Enabled := Editable;
+  MainIDEBar.itmSourceInsertGPLNoticeTranslated.Visible := (EnglishGPLNotice<>lisGPLNotice);
   IDECommandList.FindIDECommand(ecInsertLGPLNotice).Enabled := Editable;
-  IDECommandList.FindIDECommand(ecInsertLGPLNoticeTranslated).Visible := Editable and (EnglishLGPLNotice<>lisLGPLNotice);
+  IDECommandList.FindIDECommand(ecInsertLGPLNoticeTranslated).Enabled := Editable;
+  MainIDEBar.itmSourceInsertLGPLNoticeTranslated.Visible := (EnglishLGPLNotice<>lisLGPLNotice);
   IDECommandList.FindIDECommand(ecInsertModifiedLGPLNotice).Enabled := Editable;
-  IDECommandList.FindIDECommand(ecInsertModifiedLGPLNoticeTranslated).Visible := Editable and (EnglishModifiedLGPLNotice<>lisModifiedLGPLNotice);
+  IDECommandList.FindIDECommand(ecInsertModifiedLGPLNoticeTranslated).Enabled := Editable;
+  MainIDEBar.itmSourceInsertModifiedLGPLNoticeTranslated.Visible := (EnglishModifiedLGPLNotice<>lisModifiedLGPLNotice);
   IDECommandList.FindIDECommand(ecInsertMITNotice).Enabled := Editable;
-  IDECommandList.FindIDECommand(ecInsertMITNoticeTranslated).Visible := Editable and (EnglishMITNotice<>lisMITNotice);
+  IDECommandList.FindIDECommand(ecInsertMITNoticeTranslated).Enabled := Editable;
+  MainIDEBar.itmSourceInsertMITNoticeTranslated.Visible := (EnglishMITNotice<>lisMITNotice);
   IDECommandList.FindIDECommand(ecInsertUserName).Enabled := Editable;
   IDECommandList.FindIDECommand(ecInsertDateTime).Enabled := Editable;
   IDECommandList.FindIDECommand(ecInsertChangeLogEntry).Enabled := Editable;
@@ -3745,13 +3831,23 @@ procedure TMainIDE.UpdateProjectCommands(Sender: TObject);
 var
   ASrcEdit: TSourceEditor;
   AUnitInfo: TUnitInfo;
+  xCmd: TIDECommand;
 begin
   GetCurrentUnit(ASrcEdit,AUnitInfo);
   if not UpdateProjectCommandsStamp.Changed(AUnitInfo) then
     Exit;
 
   IDECommandList.FindIDECommand(ecAddCurUnitToProj).Enabled:=Assigned(AUnitInfo) and not AUnitInfo.IsPartOfProject;
-  IDECommandList.FindIDECommand(ecBuildManyModes).Enabled:=Project1.BuildModes.Count>1;
+  IDECommandList.FindIDECommand(ecBuildManyModes).Enabled:=(Project1<>nil) and (Project1.BuildModes.Count>1);
+
+  xCmd := IDECommandList.FindIDECommand(ecProjectChangeBuildMode);
+  if Assigned(Project1) then
+    xCmd.Hint :=
+      Trim(lisChangeBuildMode + ' ' + KeyValuesToCaptionStr(xCmd.ShortcutA, xCmd.ShortcutB, '(')) + sLineBreak +
+      Format('[%s]', [Project1.ActiveBuildMode.GetCaption])
+  else
+    xCmd.Hint :=
+      Trim(lisChangeBuildMode + ' ' + KeyValuesToCaptionStr(xCmd.ShortcutA, xCmd.ShortcutB, '('));
 end;
 
 procedure TMainIDE.UpdatePackageCommands(Sender: TObject);
@@ -3927,6 +4023,56 @@ begin
   DoSaveProject([sfSaveAs]);
 end;
 
+procedure TMainIDE.mnuProjectResaveFormsWithI18n(Sender: TObject);
+var
+  AnUnitInfo: TUnitInfo;
+  LFMFileName: string;
+  OpenStatus, WriteStatus: TModalResult;
+  AbortFlag, ReadSaveFailFlag: boolean;
+begin
+  AbortFlag:=false;
+  AnUnitInfo:=Project1.FirstPartOfProject;
+  while (AnUnitInfo<>nil) and (not AbortFlag) do
+  begin
+    ReadSaveFailFlag:=false;
+    if FileNameIsPascalSource(AnUnitInfo.Filename) then
+    begin
+      LFMFileName:=AnUnitInfo.UnitResourceFileformat.GetUnitResourceFilename(AnUnitInfo.Filename,true);
+      if FileExistsCached(LFMFileName) and (not AnUnitInfo.DisableI18NForLFM) then
+      begin
+        OpenStatus:=LazarusIDE.DoOpenEditorFile(AnUnitInfo.Filename,-1,-1,[ofAddToRecent]);
+        if OpenStatus=mrOk then
+        begin
+          AnUnitInfo.Modified:=true;
+          WriteStatus:=LazarusIDE.DoSaveEditorFile(AnUnitInfo.Filename,[]);
+          //DebugLn(['TMainIDE.mnuProjectResaveFormsWithI18n Resaving form "',AnUnitInfo.Filename,'"']);
+          if WriteStatus<>mrOk then
+          begin
+            ReadSaveFailFlag:=true;
+            if (WriteStatus=mrAbort) or
+              (IDEMessageDialog(lisErrorSavingForm, Format(lisCannotSaveForm, [
+                AnUnitInfo.Filename]), mtError, [
+                mbRetry, mbAbort])=mrAbort) then
+                AbortFlag:=true;
+          end;
+        end
+        else
+        begin
+          ReadSaveFailFlag:=true;
+          if (OpenStatus=mrAbort) or
+            (IDEMessageDialog(lisErrorOpeningForm, Format(lisCannotOpenForm, [
+              AnUnitInfo.Filename]), mtError, [mbRetry,
+              mbAbort])=mrAbort) then
+              AbortFlag:=true;
+        end;
+      end;
+    end;
+    //we try next file only if read and write were successful, otherwise we retry current file or abort
+    if not ReadSaveFailFlag then
+      AnUnitInfo:=AnUnitInfo.NextPartOfProject;
+  end;
+end;
+
 procedure TMainIDE.mnuPublishProjectClicked(Sender: TObject);
 begin
   DoPublishProject([],true);
@@ -3963,22 +4109,19 @@ begin
   Project1.CompilerOptions.OtherDefines.Assign(Project1.OtherDefines);
 
   Capt := Format(dlgProjectOptionsFor, [Project1.GetTitleOrName]);
-  if DoOpenIDEOptions(nil, Capt, AFilter, [])
-  and not Project1.OtherDefines.Equals(Project1.CompilerOptions.OtherDefines) then
+  if DoOpenIDEOptions(nil, Capt, AFilter, []) then
   begin
-    Project1.OtherDefines.Assign(Project1.CompilerOptions.OtherDefines);
+    if not Project1.OtherDefines.Equals(Project1.CompilerOptions.OtherDefines) then
+      Project1.OtherDefines.Assign(Project1.CompilerOptions.OtherDefines);
     Project1.Modified:=True;
+    MainBuildBoss.SetBuildTargetProject1(false);
+    MainIDE.UpdateCaption;
   end;
 end;
 
 procedure TMainIDE.mnuProjectOptionsClicked(Sender: TObject);
 begin
-  ProjectOptionsHelper([TProjectIDEOptions, TProjectCompilerOptions]);
-end;
-
-procedure TMainIDE.mnuChgBuildModeClicked(Sender: TObject);
-begin
-  ProjectOptionsHelper([TProjectCompilerOptions]);
+  ProjectOptionsHelper([TAbstractIDEProjectOptions, TProjectCompilerOptions]);
 end;
 
 procedure TMainIDE.mnuBuildModeClicked(Sender: TObject);
@@ -3995,7 +4138,7 @@ var
   POFileAge: LongInt;
   POFileAgeValid: Boolean;
   POOutDir: String;
-  LRTFilename: String;
+  LRJFilename: String;
   UnitOutputDir: String;
   RSTFilename: String;
   RSJFilename: String;
@@ -4006,7 +4149,7 @@ begin
 
   POFilename := MainBuildBoss.GetProjectTargetFilename(AProject);
   if POFilename='' then begin
-    DebugLn(['TMainIDE.UpdateProjectPOFile unable to get project target filename']);
+    DebugLn(['Warning: (lazarus) [TMainIDE.UpdateProjectPOFile] unable to get project target filename']);
     exit;
   end;
   POFilename:=ChangeFileExt(POFilename, '.po');
@@ -4026,10 +4169,11 @@ begin
   end;
 
   POFileAgeValid:=false;
-  if FileExistsCached(POFilename) then begin
-    POFileAge:=FileAgeCached(POFilename);
-    POFileAgeValid:=true;
-  end;
+  if not AProject.ForceUpdatePoFiles then
+    if FileExistsCached(POFilename) then begin
+      POFileAge:=FileAgeCached(POFilename);
+      POFileAgeValid:=true;
+    end;
 
   //DebugLn(['TMainIDE.UpdateProjectPOFile Updating POFilename="',POFilename,'"']);
 
@@ -4044,11 +4188,11 @@ begin
       if (AProject.MainFilename<>CurFilename)
       and (not FilenameIsPascalUnit(CurFilename)) then
         continue;
-      // check .lrt file
-      LRTFilename:=ChangeFileExt(CurFilename,'.lrt');
-      if FileExistsCached(LRTFilename)
-      and ((not POFileAgeValid) or (FileAgeCached(LRTFilename)>POFileAge)) then
-        Files[LRTFilename]:=nil;
+      // check .lrj file
+      LRJFilename:=ChangeFileExt(CurFilename,'.lrj');
+      if FileExistsCached(LRJFilename)
+      and ((not POFileAgeValid) or (FileAgeCached(LRJFilename)>POFileAge)) then
+        Files[LRJFilename]:=nil;
       // check .rst/.rsj file
       RSTFilename:=ChangeFileExt(CurFilename,'.rst');
       RSJFilename:=ChangeFileExt(CurFilename,'.rsj');
@@ -4073,7 +4217,8 @@ begin
     if Files.Tree.Count=0 then exit(mrOk);
     Files.GetNames(FileList);
     try
-      UpdatePoFileAndTranslations(FileList, POFilename);
+      UpdatePoFileAndTranslations(FileList, POFilename, AProject.ForceUpdatePoFiles,
+        AProject.I18NExcludedIdentifiers, AProject.I18NExcludedOriginals);
       Result := mrOk;
     except
       on E:EPOFileError do begin
@@ -4082,6 +4227,9 @@ begin
             LineEnding+LineEnding, E.Message]), mtError, [mbOk]);
       end;
     end;
+
+    // Reset force update of PO files
+    AProject.ForceUpdatePoFiles := False;
   finally
     FileList.Free;
     Files.Free;
@@ -4095,7 +4243,7 @@ end;
 
 procedure TMainIDE.mnuBuildProjectClicked(Sender: TObject);
 Begin
-  DoBuildProject(crBuild,[pbfCleanCompile]);
+  DoBuildProject(crBuild,[]);
 end;
 
 procedure TMainIDE.mnuQuickCompileProjectClicked(Sender: TObject);
@@ -4118,6 +4266,11 @@ end;
 procedure TMainIDE.mnuAbortBuildProjectClicked(Sender: TObject);
 Begin
   DoAbortBuild(false);
+end;
+
+procedure TMainIDE.mnuRunMenuRunWithoutDebugging(Sender: TObject);
+begin
+  DoRunProjectWithoutDebug;
 end;
 
 procedure TMainIDE.mnuRunProjectClicked(Sender: TObject);
@@ -4205,7 +4358,7 @@ end;
 
 procedure TMainIDE.mnuConfigBuildFileClicked(Sender: TObject);
 begin
-  DoConfigBuildFile;
+  DoConfigureBuildFile;
 end;
 
 procedure TMainIDE.mnuRunParametersClicked(Sender: TObject);
@@ -4492,7 +4645,8 @@ end;
 
 procedure TMainIDE.LoadDesktopSettings(TheEnvironmentOptions: TEnvironmentOptions);
 begin
-  DebugLn(['* TMainIDE.LoadDesktopSettings']);
+  if ConsoleVerbosity>0 then
+    DebugLn(['Hint: (lazarus) TMainIDE.LoadDesktopSettings']);
   if ObjectInspector1<>nil then
     TheEnvironmentOptions.ObjectInspectorOptions.AssignTo(ObjectInspector1);
   if MessagesView<>nil then
@@ -4502,7 +4656,8 @@ end;
 procedure TMainIDE.SaveDesktopSettings(TheEnvironmentOptions: TEnvironmentOptions);
 // Called also before reading EnvironmentOptions
 begin
-  DebugLn(['* TMainIDE.SaveDesktopSettings']);
+  if ConsoleVerbosity>0 then
+    DebugLn(['Hint: (lazarus) TMainIDE.SaveDesktopSettings']);
   EnvironmentOptions.Desktop.ImportSettingsFromIDE;
 
   if ObjectInspector1<>nil then
@@ -4511,16 +4666,18 @@ end;
 
 procedure TMainIDE.DoLoadIDEOptions(Sender: TObject; AOptions: TAbstractIDEOptions);
 begin
-  DebugLn(['** TMainIDE.OnLoadIDEOptions: ', AOptions.ClassName]);
-  // ToDo: Figure out why this is not called.
+  if ConsoleVerbosity>0 then
+    DebugLn(['Hint: (lazarus) TMainIDE.OnLoadIDEOptions: ', AOptions.ClassName]);
+  // ToDo: Figure out why this is not called with TEnvironmentOptions.
   if AOptions is TEnvironmentOptions then
     LoadDesktopSettings(AOptions as TEnvironmentOptions);
 end;
 
 procedure TMainIDE.DoSaveIDEOptions(Sender: TObject; AOptions: TAbstractIDEOptions);
 begin
-  DebugLn(['** TMainIDE.OnSaveIDEOptions: ', AOptions.ClassName]);
-  // ToDo: Figure out why this is not called.
+  if ConsoleVerbosity>0 then
+    DebugLn(['Hint: (lazarus) TMainIDE.OnSaveIDEOptions: ', AOptions.ClassName]);
+  // ToDo: Figure out why this is not called with TEnvironmentOptions.
   if AOptions is TEnvironmentOptions then
     SaveDesktopSettings(AOptions as TEnvironmentOptions);
 end;
@@ -4560,7 +4717,8 @@ begin
     IDEOptionsDialog.WriteAll(not Result);    // Restore if user cancelled.
     if Result then
     begin
-      DebugLn(['TMainIDE.DoOpenIDEOptions: Options saved, updating TaskBar.']);
+      if ConsoleVerbosity>0 then
+        DebugLn(['Hint: (lazarus) TMainIDE.DoOpenIDEOptions: Options saved, updating TaskBar.']);
       // Update TaskBarBehavior immediately.
       if EnvironmentOptions.Desktop.SingleTaskBarButton then
         Application.TaskBarBehavior := tbSingleButton
@@ -4731,9 +4889,10 @@ var
   AProject: TProject;
 begin
   //debugln(['TMainIDE.DoProjectOptionsBeforeRead ',DbgSName(Sender)]);
+  if not (Sender is TProjectIDEOptions) then exit;
   ActiveSrcEdit:=nil;
   BeginCodeTool(ActiveSrcEdit, ActiveUnitInfo, []);
-  AProject:=(Sender as TProjectIDEOptions).Project;
+  AProject:=TProjectIDEOptions(Sender).Project;
   AProject.BackupSession;
   AProject.BackupBuildModes;
   AProject.UpdateExecutableType;
@@ -4828,9 +4987,14 @@ var
 
 begin
   //debugln(['TMainIDE.DoProjectOptionsAfterWrite ',DbgSName(Sender),' Restore=',Restore]);
-  AProject:=(Sender as TProjectIDEOptions).Project;
-  if not Restore then
+  if not (Sender is TProjectIDEOptions) then exit;
+  AProject:=TProjectIDEOptions(Sender).Project;
+  if Restore then
   begin
+    AProject.RestoreBuildModes;
+    AProject.RestoreSession;
+  end
+  else begin
     SetTitle;
     SetAutoCreateForms;
     // extend include path
@@ -4842,19 +5006,11 @@ begin
                          mtWarning, [mbOk]);
     end;
     UpdateCaption;
+    if Assigned(ProjInspector) then
+      ProjInspector.UpdateTitle;
     AProject.DefineTemplates.AllChanged;
-  end;
-  if Restore then
-  begin
-    AProject.RestoreBuildModes;
-    AProject.RestoreSession;
-  end;
+    IncreaseCompilerParseStamp;
 
-  IncreaseCompilerParseStamp;
-  MainBuildBoss.SetBuildTargetProject1(false);
-
-  if not Restore then
-  begin
     if AProject.UseAsDefault then
     begin
       // save as default
@@ -4876,11 +5032,10 @@ end;
 
 procedure TMainIDE.ComponentPaletteClassSelected(Sender: TObject);
 begin
-  // code below cant be handled correctly by integrated IDE
-  if
-    (IDETabMaster = nil) and
-    (Screen.CustomFormZOrderCount > 1)
-  and Assigned(Screen.CustomFormsZOrdered[1].Designer) then begin
+  // code below can't be handled correctly by integrated IDE
+  if (IDETabMaster = nil) and (Screen.CustomFormZOrderCount > 1)
+  and Assigned(Screen.CustomFormsZOrdered[1].Designer) then
+  begin
     // previous active form was designer form
     ShowDesignerForm(Screen.CustomFormsZOrdered[1]);
     DoCallShowDesignerFormOfSourceHandler(lihtShowDesignerFormOfSource,
@@ -5008,7 +5163,7 @@ var
     try
       CTResult:=CodeToolBoss.FindUsedUnitFiles(RootUnitInfo.Source,CurUnitFilenames);
       if not CTResult then begin
-        DebugLn(['TMainIDE.DoFixupComponentReferences.FindUsedUnits failed parsing ',RootUnitInfo.Filename]);
+        DebugLn(['Error: (lazarus) [TMainIDE.DoFixupComponentReferences.FindUsedUnits] failed parsing ',RootUnitInfo.Filename]);
         // ignore the error. This was just a fallback search.
       end;
       if (CurUnitFilenames<>nil) then begin
@@ -5029,7 +5184,7 @@ var
         CTResult:=CodeToolBoss.FindUsedUnitFiles(Project1.MainUnitInfo.Source,
           CurUnitFilenames);
         if not CTResult then begin
-          DebugLn(['TMainIDE.DoFixupComponentReferences.FindUsedUnits failed parsing ',Project1.MainUnitInfo.Filename]);
+          DebugLn(['Error: (lazarus) [TMainIDE.DoFixupComponentReferences.FindUsedUnits] failed parsing ',Project1.MainUnitInfo.Filename]);
           // ignore the error. This was just a fallback search.
         end;
         if (CurUnitFilenames<>nil) then begin
@@ -5052,7 +5207,7 @@ var
         // load the lfm file
         ModalResult:=LoadCodeBuffer(LFMCode,LFMFilename,[lbfCheckIfText],true);
         if ModalResult<>mrOk then begin
-          debugln('TMainIDE.DoFixupComponentReferences Failed loading ',LFMFilename);
+          debugln('Error: (lazarus) [TMainIDE.DoFixupComponentReferences] Failed loading ',LFMFilename);
           if ModalResult=mrAbort then break;
         end else begin
           // read the LFM component name
@@ -5090,7 +5245,7 @@ var
       end;
     end;
 
-    DebugLn(['FindUnitFilename missing: ',aComponentName]);
+    DebugLn(['Warning: (lazarus) FindUnitFilename missing: ',aComponentName]);
     Result:='';
   end;
 
@@ -5107,7 +5262,7 @@ var
     // load lfm
     UnitFilename:=FindUnitFilename(RefRootName);
     if UnitFilename='' then begin
-      DebugLn(['TMainIDE.DoFixupComponentReferences.LoadDependencyHidden failed to find lfm for "',RefRootName,'"']);
+      DebugLn(['Error: (lazarus) [TMainIDE.DoFixupComponentReferences.LoadDependencyHidden] failed to find lfm for "',RefRootName,'"']);
       exit(mrCancel);
     end;
     // ToDo: use UnitResources
@@ -5116,7 +5271,7 @@ var
       LFMFilename:=ChangeFileExt(UnitFilename,'.dfm');
     ModalResult:=LoadCodeBuffer(LFMCode,LFMFilename,[lbfCheckIfText],false);
     if ModalResult<>mrOk then begin
-      debugln('TMainIDE.DoFixupComponentReferences Failed loading ',LFMFilename);
+      debugln('Error: (lazarus) [TMainIDE.DoFixupComponentReferences] Failed loading ',LFMFilename);
       exit(mrCancel);
     end;
 
@@ -5132,7 +5287,7 @@ var
     begin
       ModalResult := LoadCodeBuffer(UnitCode, UnitFileName, [lbfCheckIfText],false);
       if ModalResult<>mrOk then begin
-        debugln('TMainIDE.DoFixupComponentReferences Failed loading ',UnitFilename);
+        debugln('Error: (lazarus) [TMainIDE.DoFixupComponentReferences] Failed loading ',UnitFilename);
         exit(mrCancel);
       end;
       RefUnitInfo.Source := UnitCode;
@@ -5183,7 +5338,7 @@ begin
     CurRoot:=CurRoot.Owner;
   RootUnitInfo:=Project1.UnitWithComponent(CurRoot);
   if RootUnitInfo=nil then begin
-    debugln(['TMainIDE.DoFixupComponentReferences WARNING: component without unitinfo: ',DbgSName(RootComponent),' CurRoot=',DbgSName(CurRoot)]);
+    debugln(['Warning: (lazarus) [TMainIDE.DoFixupComponentReferences] component without unitinfo: ',DbgSName(RootComponent),' CurRoot=',DbgSName(CurRoot)]);
     exit;
   end;
 
@@ -5208,7 +5363,7 @@ begin
         ReferenceInstanceNames.Clear;
         GetFixupInstanceNames(CurRoot,RefRootName,ReferenceInstanceNames);
 
-        DebugLn(['TMainIDE.DoFixupComponentReferences UNRESOLVED BEFORE loading ',j,' Root=',dbgsName(CurRoot),' RefRoot=',RefRootName,' Refs="',Trim(ReferenceInstanceNames.Text),'"']);
+        DebugLn(['Note: (lazarus) [TMainIDE.DoFixupComponentReferences] UNRESOLVED BEFORE loading ',j,' Root=',dbgsName(CurRoot),' RefRoot=',RefRootName,' Refs="',Trim(ReferenceInstanceNames.Text),'"']);
 
         // load the referenced component
         LoadResult:=LoadDependencyHidden(RefRootName);
@@ -5222,7 +5377,7 @@ begin
           // ToDo: give a nice error message and give user the choice between
           // a) ignore and loose the references
           // b) undo the opening (close the designer forms)
-          DebugLn(['TMainIDE.DoFixupComponentReferences failed loading component ',RefRootName]);
+          DebugLn(['Error: (lazarus) [TMainIDE.DoFixupComponentReferences] failed loading component ',RefRootName]);
           Result:=mrCancel;
         end;
       end;
@@ -5233,7 +5388,7 @@ begin
       GlobalFixupReferences;
     except
       on E: Exception do begin
-        DebugLn(['TMainIDE.DoFixupComponentReferences GlobalFixupReferences ',E.Message]);
+        DebugLn(['Error: (lazarus) [TMainIDE.DoFixupComponentReferences] GlobalFixupReferences ',E.Message]);
         DumpExceptionBackTrace;
       end;
     end;
@@ -5250,7 +5405,7 @@ begin
           continue;
         ReferenceInstanceNames.Clear;
         GetFixupInstanceNames(CurRoot,RefRootName,ReferenceInstanceNames);
-        DebugLn(['TMainIDE.DoFixupComponentReferences UNRESOLVED AFTER loading ',j,' ',dbgsName(CurRoot),' RefRoot=',RefRootName,' Refs="',Trim(ReferenceInstanceNames.Text),'"']);
+        DebugLn(['Warning: (lazarus) [TMainIDE.DoFixupComponentReferences] UNRESOLVED AFTER loading ',j,' ',dbgsName(CurRoot),' RefRoot=',RefRootName,' Refs="',Trim(ReferenceInstanceNames.Text),'"']);
 
         // forget the rest of the dangling references
         RemoveFixupReferences(CurRoot,RefRootName);
@@ -5313,6 +5468,9 @@ begin
   MainIDEBar.itmFileSave.Enabled := ((SrcEdit<>nil) and SrcEdit.Modified)
                               or ((AnUnitInfo<>nil) and AnUnitInfo.IsVirtual);
   MainIDEBar.itmFileExportHtml.Enabled := (SrcEdit<>nil);
+  MainIDEBar.itmProjectResaveFormsWithI18n.Enabled := (Project1<>nil) and (not Project1.IsVirtual)
+                                                      and (Project1.EnableI18N)
+                                                      and (Project1.EnableI18NForLFM);
   if UpdateSaveAll then
     MainIDEBar.itmFileSaveAll.Enabled := MainIDEBar.itmProjectSave.Enabled;
 end;
@@ -5412,14 +5570,14 @@ begin
   CurResult:=DoCallModalFunctionHandler(lihtSavingAll);
   if CurResult=mrAbort then begin
     if ConsoleVerbosity>0 then
-      debugln(['TMainIDE.DoSaveAll DoCallModalFunctionHandler(lihtSavingAll) failed']);
+      debugln(['Error: (lazarus) [TMainIDE.DoSaveAll] DoCallModalFunctionHandler(lihtSavingAll) failed']);
     exit(mrAbort);
   end;
   if CurResult<>mrOk then Result:=mrCancel;
   CurResult:=DoSaveProject(Flags);
   if CurResult<>mrOK then begin
     if ConsoleVerbosity>0 then
-      debugln(['TMainIDE.DoSaveAll DoSaveProject failed']);
+      debugln(['Error: (lazarus) [TMainIDE.DoSaveAll] DoSaveProject failed']);
   end;
   SaveEnvironment(true);
   SaveIncludeLinks;
@@ -5430,7 +5588,7 @@ begin
   CurResult:=DoCallModalFunctionHandler(lihtSavedAll);
   if CurResult<>mrOK then begin
     if ConsoleVerbosity>0 then
-      debugln(['TMainIDE.DoSaveAll DoCallModalFunctionHandler(lihtSavedAll) failed']);
+      debugln(['Error: (lazarus) [TMainIDE.DoSaveAll] DoCallModalFunctionHandler(lihtSavedAll) failed']);
   end;
   if CurResult=mrAbort then
     Result:=mrAbort
@@ -5517,11 +5675,11 @@ begin
     begin
       aFilename:=UnitList[i];
       if not FileExistsUTF8(aFilename) then continue;
-      debugln(['TMainIDE.DoSelectFrame Filename="',aFilename,'"']);
+      //debugln(['TMainIDE.DoSelectFrame Filename="',aFilename,'"']);
       if DoOpenComponent(aFilename,
         [ofOnlyIfExists,ofLoadHiddenResource,ofUseCache],[],AComponent)<>mrOk
       then exit;
-      debugln(['TMainIDE.DoSelectFrame AncestorComponent=',DbgSName(AComponent)]);
+      //debugln(['TMainIDE.DoSelectFrame AncestorComponent=',DbgSName(AComponent)]);
       Result := TComponentClass(AComponent.ClassType);
       exit;
     end;
@@ -5988,7 +6146,7 @@ begin
     Result.EndUpdate;
 
   Result.MainProject:=true;
-  Result.OnFileBackup:=@MainBuildBoss.BackupFile;
+  Result.OnFileBackup:=@MainBuildBoss.BackupFileForWrite;
   Result.OnLoadProjectInfo:=@OnLoadProjectInfoFromXMLConfig;
   Result.OnSaveProjectInfo:=@OnSaveProjectInfoToXMLConfig;
   Result.OnSaveUnitSessionInfo:=@OnSaveProjectUnitSessionInfo;
@@ -6089,7 +6247,7 @@ begin
 
   // check if it is a directory
   if DirPathExistsCached(AFileName) then begin
-    debugln(['TMainIDE.DoOpenProjectFile file is a directory']);
+    debugln(['Error: (lazarus) [TMainIDE.DoOpenProjectFile] file is a directory']);
     exit;
   end;
 
@@ -6104,7 +6262,7 @@ begin
   DiskFilename:=CodeToolBoss.DirectoryCachePool.FindDiskFilename(AFilename);
   if DiskFilename<>AFilename then begin
     // the case is different
-    DebugLn(['TMainIDE.DoOpenProjectFile Fixing file name: ',AFilename,' -> ',DiskFilename]);
+    DebugLn(['Warning: (lazarus) [TMainIDE.DoOpenProjectFile] Fixing file name: ',AFilename,' -> ',DiskFilename]);
     AFilename:=DiskFilename;
   end;
 
@@ -6202,6 +6360,12 @@ begin
   Result:=SourceFileMgr.AddActiveUnitToProject;
 end;
 
+function TMainIDE.DoAddUnitToProject(AEditor: TSourceEditorInterface
+  ): TModalResult;
+begin
+  Result := SourceFileMgr.AddUnitToProject(AEditor);
+end;
+
 function TMainIDE.DoRemoveFromProjectDialog: TModalResult;
 Begin
   Result:=SourceFileMgr.RemoveFromProjectDialog;
@@ -6231,7 +6395,7 @@ begin
   Result:=mrCancel;
   if not (ToolStatus in [itNone,itDebugger,itBuilder]) then begin
     if ConsoleVerbosity>0 then
-      DebugLn('TMainIDE.DoSaveForBuild ToolStatus forbids it: ',dbgs(ToolStatus));
+      DebugLn('Error: (lazarus) [TMainIDE.DoSaveForBuild] ToolStatus forbids it: ',dbgs(ToolStatus));
     Result:=mrAbort;
     exit;
   end;
@@ -6249,14 +6413,14 @@ begin
   Project1.UpdateExecutableType;
   if Result<>mrOk then begin
     if ConsoleVerbosity>0 then
-      DebugLn('TMainIDE.DoSaveForBuild project saving failed');
+      DebugLn('Error: (lazarus) [TMainIDE.DoSaveForBuild] project saving failed');
     exit;
   end;
 
   Result:=PkgBoss.DoSaveAllPackages([]);
   if Result<>mrOK then
     if ConsoleVerbosity>0 then
-      debugln(['TMainIDE.DoSaveForBuild PkgBoss.DoSaveAllPackages failed']);
+      debugln(['Error: (lazarus) [TMainIDE.DoSaveForBuild] PkgBoss.DoSaveAllPackages failed']);
 
   // get non IDE disk changes
   InvalidateFileStateCache;
@@ -6369,6 +6533,7 @@ var
   WorkingDir: String;
   CompilerParams: String;
   NeedBuildAllFlag: Boolean;
+  NoBuildNeeded: Boolean;
   UnitOutputDirectory: String;
   TargetExeName: String;
   TargetExeDirectory: String;
@@ -6379,13 +6544,13 @@ var
   StartTime: TDateTime;
 begin
   if DoAbortBuild(true)<>mrOK then begin
-    debugln(['TMainIDE.DoBuildProject DoAbortBuild failed']);
+    debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] DoAbortBuild failed']);
     exit(mrCancel);
   end;
 
   Result:=SourceFileMgr.PrepareForCompileWithMsg;
   if Result<>mrOk then begin
-    debugln(['TMainIDE.DoBuildProject PrepareForCompile failed']);
+    debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] PrepareForCompile failed']);
     exit;
   end;
 
@@ -6395,7 +6560,7 @@ begin
     // warn if nothing to do
     Result:=CheckCompileReasons(AReason,Project1.CompilerOptions,false);
     if Result<>mrOk then begin
-      debugln(['TMainIDE.DoBuildProject CheckCompileReasons negative']);
+      debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] CheckCompileReasons negative']);
       exit;
     end;
   end;
@@ -6414,7 +6579,7 @@ begin
   try
     Result:=DoSaveForBuild(AReason);
     if Result<>mrOk then begin
-      debugln(['TMainIDE.DoBuildProject DoSaveForBuild failed']);
+      debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] DoSaveForBuild failed']);
       exit;
     end;
 
@@ -6433,7 +6598,7 @@ begin
     // now building can start: call handler
     Result:=DoCallModalFunctionHandler(lihtProjectBuilding);
     if Result<>mrOk then begin
-      debugln(['TMainIDE.DoBuildProject handler lihtProjectBuilding negative']);
+      debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] handler lihtProjectBuilding negative']);
       exit;
     end;
 
@@ -6450,7 +6615,7 @@ begin
     if not (pbfDoNotCompileDependencies in Flags) then begin
       Result:=DoCallModalFunctionHandler(lihtProjectDependenciesCompiling);
       if Result<>mrOk then begin
-        debugln(['TMainIDE.DoBuildProject handler lihtProjectDependenciesCompiling negative']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] handler lihtProjectDependenciesCompiling negative']);
         exit;
       end;
       PkgFlags:=[pcfDoNotSaveEditorFiles];
@@ -6459,12 +6624,12 @@ begin
       Result:=PkgBoss.DoCompileProjectDependencies(Project1,PkgFlags);
       if Result <> mrOk then
       begin
-        debugln(['TMainIDE.DoBuildProject PkgBoss.DoCompileProjectDependencies failed']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] PkgBoss.DoCompileProjectDependencies failed']);
         exit;
       end;
       Result:=DoCallModalFunctionHandler(lihtProjectDependenciesCompiled);
       if Result<>mrOk then begin
-        debugln(['TMainIDE.DoBuildProject handler lihtProjectDependenciesCompiled negative']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] handler lihtProjectDependenciesCompiled negative']);
         exit;
       end;
     end;
@@ -6473,33 +6638,56 @@ begin
     Result:=DoWarnAmbiguousFiles;
     if Result<>mrOk then
     begin
-      debugln(['TMainIDE.DoBuildProject DoWarnAmbiguousFiles negative']);
+      debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] DoWarnAmbiguousFiles negative']);
       exit;
     end;
 
     // check if build is needed (only if we will call the compiler)
     // and check if a 'build all' is needed
     NeedBuildAllFlag:=false;
+    NoBuildNeeded:= false;
     aCompileHint:='';
     if (AReason in Project1.CompilerOptions.CompileReasons) then begin
       Result:=MainBuildBoss.DoCheckIfProjectNeedsCompilation(Project1,
                                                  NeedBuildAllFlag,aCompileHint);
-      if  (pbfOnlyIfNeeded in Flags)
+      if  (AReason = crRun)
       and (not (pfAlwaysBuild in Project1.Flags)) then begin
         if Result=mrNo then begin
-          debugln(['TMainIDE.DoBuildProject MainBuildBoss.DoCheckIfProjectNeedsCompilation nothing to be done']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] MainBuildBoss.DoCheckIfProjectNeedsCompilation nothing to be done']);
           Result:=mrOk;
-          exit;
-        end;
+          // continue for now, check if 'Before' tool is required
+          NoBuildNeeded:= true;
+        end
+        else
         if Result<>mrYes then
         begin
-          debugln(['TMainIDE.DoBuildProject MainBuildBoss.DoCheckIfProjectNeedsCompilation failed']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] MainBuildBoss.DoCheckIfProjectNeedsCompilation failed']);
           exit;
         end;
       end;
     end;
     if aCompileHint<>'' then
       aCompileHint:='Compile Reason: '+aCompileHint;
+
+    // execute compilation tool 'Before'
+    if not (pbfSkipTools in Flags) then begin
+      ToolBefore:=TProjectCompilationToolOptions(
+                                        Project1.CompilerOptions.ExecuteBefore);
+      if (AReason in ToolBefore.CompileReasons) then begin
+        Result:=Project1.CompilerOptions.ExecuteBefore.Execute(
+               Project1.ProjectDirectory, lisProject2+lisExecutingCommandBefore,
+               aCompileHint);
+        if Result<>mrOk then
+        begin
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] CompilerOptions.ExecuteBefore.Execute failed']);
+          exit;
+        end;
+      end;
+    end;
+
+    // leave if no further action is needed
+    if NoBuildNeeded then
+      exit;
 
     // create unit output directory
     UnitOutputDirectory:=Project1.CompilerOptions.GetUnitOutPath(false);
@@ -6515,7 +6703,7 @@ begin
       end;
       Result:=ForceDirectoryInteractive(UnitOutputDirectory,[mbRetry]);
       if Result<>mrOk then begin
-        debugln(['TMainIDE.DoBuildProject ForceDirectoryInteractive "',UnitOutputDirectory,'" failed']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] ForceDirectoryInteractive "',UnitOutputDirectory,'" failed']);
         exit;
       end;
     end;
@@ -6533,7 +6721,7 @@ begin
       end;
       Result:=ForceDirectoryInteractive(TargetExeDirectory,[mbRetry]);
       if Result<>mrOk then begin
-        debugln(['TMainIDE.DoBuildProject ForceDirectoryInteractive "',TargetExeDirectory,'" failed']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] ForceDirectoryInteractive "',TargetExeDirectory,'" failed']);
         exit;
       end;
     end;
@@ -6544,12 +6732,12 @@ begin
     then begin
       Result:=CreateApplicationBundle(TargetExeName, Project1.GetTitleOrName);
       if not (Result in [mrOk,mrIgnore]) then begin
-        debugln(['TMainIDE.DoBuildProject CreateApplicationBundle "',TargetExeName,'" failed']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] CreateApplicationBundle "',TargetExeName,'" failed']);
         exit;
       end;
       Result:=CreateAppBundleSymbolicLink(TargetExeName);
       if not (Result in [mrOk,mrIgnore]) then begin
-        debugln(['TMainIDE.DoBuildProject CreateAppBundleSymbolicLink "',TargetExeName,'" failed']);
+        debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] CreateAppBundleSymbolicLink "',TargetExeName,'" failed']);
         exit;
       end;
     end;
@@ -6557,24 +6745,8 @@ begin
     // update project resource files
     if not Project1.ProjResources.Regenerate(Project1.MainFilename, False, True, TargetExeDirectory)
     then begin
-      debugln(['TMainIDE.DoBuildProject ProjResources.Regenerate failed']);
+      debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] ProjResources.Regenerate failed']);
       exit;
-    end;
-
-    // execute compilation tool 'Before'
-    if not (pbfSkipTools in Flags) then begin
-      ToolBefore:=TProjectCompilationToolOptions(
-                                        Project1.CompilerOptions.ExecuteBefore);
-      if (AReason in ToolBefore.CompileReasons) then begin
-        Result:=Project1.CompilerOptions.ExecuteBefore.Execute(
-               Project1.ProjectDirectory, lisProject2+lisExecutingCommandBefore,
-               aCompileHint);
-        if Result<>mrOk then
-        begin
-          debugln(['TMainIDE.DoBuildProject CompilerOptions.ExecuteBefore.Execute failed']);
-          exit;
-        end;
-      end;
     end;
 
     if (AReason in Project1.CompilerOptions.CompileReasons)
@@ -6594,39 +6766,39 @@ begin
         // write state file, to avoid building clean every time
         Result:=Project1.SaveStateFile(CompilerFilename,CompilerParams,false);
         if Result<>mrOk then begin
-          debugln(['TMainIDE.DoBuildProject SaveStateFile before compile failed']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] SaveStateFile before compile failed']);
           exit;
         end;
 
         StartTime:=Now;
         Result:=TheCompiler.Compile(Project1,
                                 WorkingDir,CompilerFilename,CompilerParams,
-                                (pbfCleanCompile in Flags) or NeedBuildAllFlag,
+                                (AReason = crBuild) or NeedBuildAllFlag,
                                 pbfSkipLinking in Flags,
                                 pbfSkipAssembler in Flags,aCompileHint);
         if ConsoleVerbosity>=0 then
-          debugln(['TMainIDE.DoBuildProject compiler time in s: ',(Now-StartTime)*86400]);
+          debugln(['Hint: (lazarus) [TMainIDE.DoBuildProject] compiler time in s: ',(Now-StartTime)*86400]);
         DoCallBuildingFinishedHandler(lihtProjectBuildingFinished, Self, Result=mrOk);
         if Result<>mrOk then begin
           // save state, so that next time the project is not compiled clean
           Project1.LastCompilerFilename:=CompilerFilename;
           Project1.LastCompilerParams:=CompilerParams;
           Project1.LastCompilerFileDate:=FileAgeCached(CompilerFilename);
-          debugln(['TMainIDE.DoBuildProject Compile failed']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] Compile failed']);
           exit;
         end;
         // compilation succeded -> write state file
         IsComplete:=[pbfSkipLinking,pbfSkipAssembler,pbfSkipTools]*Flags=[];
         Result:=Project1.SaveStateFile(CompilerFilename,CompilerParams,IsComplete);
         if Result<>mrOk then begin
-          debugln(['TMainIDE.DoBuildProject SaveStateFile after compile failed']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] SaveStateFile after compile failed']);
           exit;
         end;
 
         // update project .po file
         Result:=UpdateProjectPOFile(Project1);
         if Result<>mrOk then begin
-          debugln(['TMainIDE.DoBuildProject UpdateProjectPOFile failed']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] UpdateProjectPOFile failed']);
           exit;
         end;
 
@@ -6651,7 +6823,7 @@ begin
                             lisProject2+lisExecutingCommandAfter,aCompileHint);
         if Result<>mrOk then
         begin
-          debugln(['TMainIDE.DoBuildProject CompilerOptions.ExecuteAfter.Execute failed']);
+          debugln(['Error: (lazarus) [TMainIDE.DoBuildProject] CompilerOptions.ExecuteAfter.Execute failed']);
           exit;
         end;
       end;
@@ -6679,7 +6851,7 @@ begin
   if Interactive then
   begin
     if IDEQuestionDialog(lisBuilding, lisTheIDEIsStillBuilding,
-      mtConfirmation, [mrAbort, lisKMAbortBuilding, mrNo, lisContinueBuilding])
+      mtConfirmation, [mrAbort, lisKMAbortBuilding, 'IsDefault', mrNo, lisContinueBuilding])
       <> mrAbort
     then
       exit;
@@ -6725,7 +6897,7 @@ begin
             (Project1.RunParameterOptions.HostApplicationFilename<>''))
           and (pfRunnable in Project1.Flags) and (Project1.MainUnitID >= 0) )
   then begin
-    debugln(['TMainIDE.DoInitProjectRun Project can not run:',
+    debugln(['Error: (lazarus) [TMainIDE.DoInitProjectRun] Project can not run:',
       ' pfRunnable=',pfRunnable in Project1.Flags,
       ' MainUnitID=',Project1.MainUnitID,
       ' Launchable=',(Project1.CompilerOptions.ExecutableType=cetProgram) or
@@ -6751,13 +6923,15 @@ begin
   end;
 
   // Build project first
-  debugln('TMainIDE.DoInitProjectRun Check build ...');
-  if DoBuildProject(crRun,[pbfOnlyIfNeeded]) <> mrOk then
+  if ConsoleVerbosity>0 then
+    debugln('Hint: (lazarus) TMainIDE.DoInitProjectRun Check build ...');
+  if DoBuildProject(crRun,[]) <> mrOk then
     Exit;
 
   // Check project build
   ProgramFilename := MainBuildBoss.GetProjectTargetFilename(Project1);
-  DebugLn(['TMainIDE.DoInitProjectRun ProgramFilename=',ProgramFilename]);
+  if ConsoleVerbosity>0 then
+    DebugLn(['Hint: (lazarus) TMainIDE.DoInitProjectRun ProgramFilename=',ProgramFilename]);
   if ((DebugClass = nil) or DebugClass.RequiresLocalExecutable)
      and not FileExistsUTF8(ProgramFilename)
   then begin
@@ -6776,7 +6950,7 @@ end;
 
 function TMainIDE.DoRunProject: TModalResult;
 begin
-  DebugLn('[TMainIDE.DoRunProject] INIT');
+  DebugLn('Hint: (lazarus) [TMainIDE.DoRunProject] INIT');
 
   if (DoInitProjectRun <> mrOK)
   or (ToolStatus <> itDebugger)
@@ -6784,13 +6958,82 @@ begin
     Result := mrAbort;
     Exit;
   end;
-  debugln('[TMainIDE.DoRunProject] Debugger=',EnvironmentOptions.DebuggerConfig.DebuggerClass);
+  debugln('Hint: (lazarus) [TMainIDE.DoRunProject] Debugger=',EnvironmentOptions.DebuggerConfig.DebuggerClass);
 
   Result := mrCancel;
 
   Result := DebugBoss.StartDebugging;
 
-  DebugLn('[TMainIDE.DoRunProject] END');
+  DebugLn('Hint: (lazarus) [TMainIDE.DoRunProject] END');
+end;
+
+function TMainIDE.DoRunProjectWithoutDebug: TModalResult;
+var
+  Process: TProcessUTF8;
+  ExeCmdLine, ExeWorkingDirectory: string;
+  ExeFileEnd, ExeFileStart: Integer;
+begin
+  if Project1=nil then
+    Exit(mrNone);
+
+  Result := DoBuildProject(crRun,[]);
+  if Result <> mrOK then
+    Exit;
+
+  Process := TProcessUTF8.Create(nil);
+  try
+    ExeCmdLine := MainBuildBoss.GetRunCommandLine;
+    if ExeCmdLine='' then
+    begin
+      IDEMessageDialog(lisUnableToRun, lisLaunchingApplicationInvalid,
+        mtError,[mbCancel]);
+      Exit(mrNone);
+    end;
+
+    if ExeCmdLine[1]='"' then
+    begin
+      ExeFileStart := 2;
+      ExeFileEnd := PosEx('"', ExeCmdLine, ExeFileStart);
+    end else
+    begin
+      ExeFileStart := 1;
+      ExeFileEnd := PosEx(' ', ExeCmdLine, ExeFileStart);
+      if ExeFileEnd<1 then
+        ExeFileEnd := Length(ExeCmdLine)+1;
+    end;
+
+    Process.Executable := Copy(ExeCmdLine, ExeFileStart, ExeFileEnd-ExeFileStart);
+    Process.Parameters.Text := Copy(ExeCmdLine, ExeFileEnd+ExeFileStart, High(Integer));
+    if not FileIsExecutable(Process.Executable) then
+    begin
+      IDEMessageDialog(lisLaunchingApplicationInvalid,
+        Format(lisTheLaunchingApplicationDoesNotExistsOrIsNotExecuta,
+               [Process.Executable, LineEnding, LineEnding+LineEnding]),
+        mtError, [mbOK]);
+      Exit(mrNone);
+    end;
+
+    ExeWorkingDirectory := Project1.RunParameterOptions.WorkingDirectory;
+    if not GlobalMacroList.SubstituteStr(ExeWorkingDirectory) then
+      ExeWorkingDirectory := '';
+
+    if ExeWorkingDirectory = '' then
+      ExeWorkingDirectory := ExtractFilePath(Process.Executable);
+    Process.CurrentDirectory := ExeWorkingDirectory;
+
+    if not DirectoryExists(Process.CurrentDirectory) then
+    begin
+      IDEMessageDialog(lisUnableToRun,
+        Format(lisTheWorkingDirectoryDoesNotExistPleaseCheckTheWorki,
+               [Process.CurrentDirectory, LineEnding]),
+        mtError,[mbCancel]);
+      Exit(mrNone);
+    end;
+
+    Process.Execute;
+  finally
+    Process.Free;
+  end;
 end;
 
 procedure TMainIDE.DoRestart;
@@ -6805,9 +7048,9 @@ const
     StartLazProcess : TProcessUTF8;
     ExeName         : string;
     Params          : TStrings;
-    Dummy           : Integer;
+    Dummy           , i: Integer;
     Unused          : boolean;
-    CmdLine: string;
+    aParam: string;
   begin
     StartLazProcess := TProcessUTF8.Create(nil);
     try
@@ -6832,18 +7075,23 @@ const
         exit;
       end;
       //DebugLn('Setting CommandLine');
-      CmdLine := ExeName +
-         ' --lazarus-pid='+IntToStr(GetProcessID) + ' '+
-         GetCommandLineParameters(Params, False);
+      StartLazProcess.Executable:=ExeName;
+      StartLazProcess.Parameters.Add('--lazarus-pid='+IntToStr(GetProcessID));
+      StartLazProcess.Parameters.AddStrings(Params);
 
-      DebugLn('CommandLine 1 : %s', [CmdLine]);
+      i:=StartLazProcess.Parameters.Count-1;
+      while (i>=0) do begin
+        aParam:=StartLazProcess.Parameters[i];
+        if (LeftStr(aParam,length(PrimaryConfPathOptLong))=PrimaryConfPathOptLong)
+        or (LeftStr(aParam,length(PrimaryConfPathOptShort))=PrimaryConfPathOptShort)
+        then break;
+        dec(i);
+      end;
 
-      if (pos(PrimaryConfPathOptLong, CmdLine) = 0) and
-         (pos(PrimaryConfPathOptShort, CmdLine) = 0) then
-        CmdLine := CmdLine + ' "' + PrimaryConfPathOptLong + GetPrimaryConfigPath+'"';
+      if i<0 then
+        StartLazProcess.Parameters.Add(PrimaryConfPathOptLong + GetPrimaryConfigPath);
 
-      DebugLn('CommandLine 2 : %s', [CmdLine]);
-      StartLazProcess.CommandLine := CmdLine;
+      DebugLn('Hint: (lazarus) CmdLine=[',StartLazProcess.Executable,' ',MergeCmdLineParams(StartLazProcess.Parameters),']');
       StartLazProcess.Execute;
     finally
       FreeAndNil(Params);
@@ -6853,7 +7101,7 @@ const
 
 var CanClose: boolean;
 begin
-  DebugLn(['TMainIDE.DoRestart ']);
+  DebugLn(['Hint: (lazarus) TMainIDE.DoRestart ']);
   CanClose:=true;
   MainIDEBar.OnCloseQuery(Self, CanClose);
   if not CanClose then exit;
@@ -6891,7 +7139,7 @@ procedure TMainIDE.DoExecuteRemoteControl;
   begin
     if (Files=nil) or (Files.Count=0) then exit;
     ProjectLoaded:=Project1<>nil;
-    DebugLn(['TMainIDE.DoExecuteRemoteControl.OpenFiles ProjectLoaded=',ProjectLoaded]);
+    DebugLn(['Hint: (lazarus) TMainIDE.DoExecuteRemoteControl.OpenFiles ProjectLoaded=',ProjectLoaded]);
 
     // open project (only the last in the list)
     AProjectFilename:='';
@@ -6904,7 +7152,7 @@ procedure TMainIDE.DoExecuteRemoteControl;
         Files.Delete(i); // remove from the list
         AProjectFilename:=CleanAndExpandFilename(AProjectFilename);
         if FileExistsUTF8(AProjectFilename) then begin
-          DebugLn(['TMainIDE.DoExecuteRemoteControl.OpenFiles AProjectFilename="',AProjectFilename,'"']);
+          DebugLn(['Hint: (lazarus) TMainIDE.DoExecuteRemoteControl.OpenFiles AProjectFilename="',AProjectFilename,'"']);
           if (Project1<>nil)
           and (CompareFilenames(AProjectFilename,Project1.ProjectInfoFile)=0)
           then begin
@@ -6927,7 +7175,7 @@ procedure TMainIDE.DoExecuteRemoteControl;
     if Files<>nil then begin
       for i:=0 to Files.Count-1 do begin
         AFilename:=CleanAndExpandFilename(Files.Strings[i]);
-        DebugLn(['TMainIDE.DoExecuteRemoteControl.OpenFiles AFilename="',AFilename,'"']);
+        DebugLn(['Hint: (lazarus) TMainIDE.DoExecuteRemoteControl.OpenFiles AFilename="',AFilename,'"']);
         if CompareFileExt(AFilename,'.lpk',false)=0 then begin
           if PkgBoss.DoOpenPackageFile(AFilename,[pofAddToRecent],true)=mrAbort
           then
@@ -6962,7 +7210,7 @@ begin
       try
         List.LoadFromFile(Filename);
       except
-        DebugLn(['TMainIDE.DoExecuteRemoteControl reading file failed: ',Filename]);
+        DebugLn(['Error: (lazarus) TMainIDE.DoExecuteRemoteControl reading file failed: ',Filename]);
       end;
       DeleteFileUTF8(Filename);
       FRemoteControlFileAge:=-1;
@@ -7054,15 +7302,22 @@ begin
 
   if DoAbortBuild(true)<>mrOK then exit;
 
+  // show messages
+  IDEWindowCreators.ShowForm(MessagesView,EnvironmentOptions.MsgViewFocus);
+
+  // clear old error lines
+  SourceEditorManager.ClearErrorLines;
+  SourceFileMgr.ArrangeSourceEditorAndMessageView(false);
+
   Result:=DoSaveAll([sfDoNotSaveVirtualFiles]);
   if Result<>mrOk then begin
-    DebugLn('TMainIDE.DoBuildLazarus: failed because saving failed');
+    DebugLn('Error: (lazarus) TMainIDE.DoBuildLazarus: failed because saving failed');
     exit;
   end;
 
   Result:=DoCallModalFunctionHandler(lihtLazarusBuilding);
   if Result<>mrOk then begin
-    debugln(['TMainIDE.DoBuildLazarusSub handler lihtLazarusBuilding negative']);
+    debugln(['Error: (lazarus) TMainIDE.DoBuildLazarusSub handler lihtLazarusBuilding negative']);
     exit;
   end;
 
@@ -7089,11 +7344,10 @@ begin
     and (BuildLazProfiles.Current.IdeBuildMode<>bmBuild) then begin
       PkgCompileFlags:=PkgCompileFlags+[pcfCompileDependenciesClean];
       if BuildLazProfiles.Current.IdeBuildMode=bmCleanAllBuild then begin
-        SourceEditorManager.ClearErrorLines;
         fBuilder.PackageOptions:='';
         Result:=fBuilder.MakeLazarus(BuildLazProfiles.Current, [blfDontBuild]);
         if Result<>mrOk then begin
-          DebugLn('TMainIDE.DoBuildLazarus: Clean all failed.');
+          DebugLn('Error: (lazarus) TMainIDE.DoBuildLazarus: Clean all failed.');
           exit;
         end;
       end;
@@ -7102,14 +7356,14 @@ begin
     // compile auto install static packages
     Result:=PkgBoss.DoCompileAutoInstallPackages(PkgCompileFlags+[pcfDoNotSaveEditorFiles],false);
     if Result<>mrOk then begin
-      DebugLn('TMainIDE.DoBuildLazarusSub: Compile AutoInstall Packages failed.');
+      DebugLn('Error: (lazarus) TMainIDE.DoBuildLazarusSub: Compile AutoInstall Packages failed.');
       exit;
     end;
 
     // create uses section addition for lazarus.pp
     Result:=PkgBoss.DoSaveAutoInstallConfig;
     if Result<>mrOk then begin
-      DebugLn('TMainIDE.DoBuildLazarus: Save AutoInstall Config failed.');
+      DebugLn('Error: (lazarus) TMainIDE.DoBuildLazarus: Save AutoInstall Config failed.');
       exit;
     end;
 
@@ -7126,7 +7380,7 @@ begin
                      InheritedOptionStrings[icoUnitPath],
                      CompiledUnitExt,'IDE');
     if Result<>mrOk then begin
-      DebugLn('TMainIDE.DoBuildLazarus: Check UnitPath for ambiguous pascal files failed.');
+      DebugLn('Error: (lazarus) TMainIDE.DoBuildLazarus: Check UnitPath for ambiguous pascal files failed.');
       exit;
     end;
 
@@ -7135,12 +7389,11 @@ begin
     Result:=fBuilder.SaveIDEMakeOptions(BuildLazProfiles.Current,
                IDEBuildFlags-[blfDontClean]+[blfBackupOldExe]);
     if Result<>mrOk then begin
-      DebugLn('TMainIDE.DoBuildLazarus: Save IDEMake options failed.');
+      DebugLn('Error: (lazarus) TMainIDE.DoBuildLazarus: Save IDEMake options failed.');
       exit;
     end;
 
     // make lazarus ide
-    SourceEditorManager.ClearErrorLines;
     IDEBuildFlags:=IDEBuildFlags+[blfUseMakeIDECfg,blfDontClean];
     Result:=fBuilder.MakeLazarus(BuildLazProfiles.Current, IDEBuildFlags);
     DoCallBuildingFinishedHandler(lihtLazarusBuildingFinished, Self, Result=mrOk);
@@ -7222,7 +7475,8 @@ begin
   end;
 end;
 
-function TMainIDE.DoBuildFile(ShowAbort: Boolean): TModalResult;
+function TMainIDE.DoBuildFile(ShowAbort: Boolean; Filename: string
+  ): TModalResult;
 var
   ActiveSrcEdit: TSourceEditor;
   ActiveUnitInfo: TUnitInfo;
@@ -7233,22 +7487,36 @@ var
   ProgramFilename: string;
   Params: string;
   ExtTool: TIDEExternalToolOptions;
-  Filename: String;
   OldToolStatus: TIDEToolStatus;
 begin
   Result:=mrCancel;
   if ToolStatus<>itNone then exit;
   ActiveSrcEdit:=nil;
-  if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[]) then exit;
+  ActiveUnitInfo:=nil;
   Result:=DoSaveProject([]);
   if Result<>mrOk then exit;
+  if Filename='' then begin
+    if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[]) then exit;
+    if not FilenameIsAbsolute(ActiveUnitInfo.Filename) then begin
+      Result:=DoSaveEditorFile(ActiveSrcEdit,[sfCheckAmbiguousFiles]);
+      if Result<>mrOk then exit;
+    end;
+    Filename:=ActiveUnitInfo.Filename;
+  end else begin
+    Filename:=TrimFilename(Filename);
+    if not FilenameIsAbsolute(Filename) then begin
+      IDEMessageDialog('Error','Unable to run file "'+Filename+'". Please save it first.',
+        mtError,[mbOk]);
+      exit;
+    end;
+  end;
   if ExternalTools.RunningCount=0 then
     IDEMessagesWindow.Clear;
   DirectiveList:=TStringList.Create;
   OldToolStatus:=ToolStatus;
   ToolStatus:=itBuilder;
   try
-    Result:=GetIDEDirectives(ActiveUnitInfo,DirectiveList);
+    Result:=GetIDEDirectives(Filename,DirectiveList);
     if Result<>mrOk then exit;
 
     // get values from directive list
@@ -7257,7 +7525,7 @@ begin
                                          IDEDirectiveNames[idedBuildWorkingDir],
                                          '');
     if BuildWorkingDir='' then
-      BuildWorkingDir:=ExtractFilePath(ActiveUnitInfo.Filename);
+      BuildWorkingDir:=ExtractFilePath(Filename);
     if not GlobalMacroList.SubstituteStr(BuildWorkingDir) then begin
       Result:=mrCancel;
       exit;
@@ -7287,7 +7555,7 @@ begin
 
     ExtTool:=TIDEExternalToolOptions.Create;
     try
-      ExtTool.Title:='Build File '+ActiveUnitInfo.Filename;
+      ExtTool.Title:='Build File '+Filename;
       ExtTool.WorkingDirectory:=BuildWorkingDir;
       ExtTool.CmdLineParams:=Params;
       ExtTool.Executable:=ProgramFilename;
@@ -7310,7 +7578,7 @@ begin
   end;
 end;
 
-function TMainIDE.DoRunFile: TModalResult;
+function TMainIDE.DoRunFile(Filename: string): TModalResult;
 var
   ActiveSrcEdit: TSourceEditor;
   ActiveUnitInfo: TUnitInfo;
@@ -7326,50 +7594,65 @@ var
   Params: string;
   ExtTool: TIDEExternalToolOptions;
   DirectiveList: TStringList;
+  Code: TCodeBuffer;
 begin
   Result:=mrCancel;
   if ToolStatus<>itNone then exit;
   ActiveSrcEdit:=nil;
-  if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[]) then exit;
-  if not FilenameIsAbsolute(ActiveUnitInfo.Filename) then begin
-    Result:=DoSaveEditorFile(ActiveSrcEdit,[sfCheckAmbiguousFiles]);
-    if Result<>mrOk then exit;
+  ActiveUnitInfo:=nil;
+  if Filename='' then begin
+    if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[]) then exit;
+    if not FilenameIsAbsolute(ActiveUnitInfo.Filename) then begin
+      Result:=DoSaveEditorFile(ActiveSrcEdit,[sfCheckAmbiguousFiles]);
+      if Result<>mrOk then exit;
+    end;
+    Filename:=ActiveUnitInfo.Filename;
+  end else begin
+    Filename:=TrimFilename(Filename);
+    if not FilenameIsAbsolute(Filename) then begin
+      IDEMessageDialog('Error','Unable to run file "'+Filename+'". Please save it first.',
+        mtError,[mbOk]);
+      exit;
+    end;
   end;
   DirectiveList:=TStringList.Create;
   try
-    Result:=GetIDEDirectives(ActiveUnitInfo,DirectiveList);
+    Result:=GetIDEDirectives(Filename,DirectiveList);
     if Result<>mrOk then exit;
 
-    if ActiveUnitInfo.Source.LineCount>0 then
-      FirstLine:=ActiveUnitInfo.Source.GetLine(0,false)
+    Code:=CodeToolBoss.LoadFile(Filename,true,false);
+    if Code=nil then exit;
+    if Code.LineCount>0 then
+      FirstLine:=Code.GetLine(0,false)
     else
       FirstLine:='';
     HasShebang:=copy(FirstLine,1,2)='#!';
     DefRunFlags:=IDEDirRunFlagDefValues;
-    if HasShebang then Exclude(DefRunFlags,idedrfBuildBeforeRun);
+    if HasShebang then
+      Exclude(DefRunFlags,idedrfBuildBeforeRun);
     RunFlags:=GetIDEDirRunFlagFromString(
       GetIDEStringDirective(DirectiveList,IDEDirectiveNames[idedRunFlags],''),
       DefRunFlags);
     AlwaysBuildBeforeRun:=idedrfBuildBeforeRun in RunFlags;
     if AlwaysBuildBeforeRun then begin
-      Result:=DoBuildFile(true);
+      Result:=DoBuildFile(true,Filename);
       if Result<>mrOk then exit;
     end;
     RunWorkingDir:=GetIDEStringDirective(DirectiveList,
                                        IDEDirectiveNames[idedRunWorkingDir],'');
     if RunWorkingDir='' then
-      RunWorkingDir:=ExtractFilePath(ActiveUnitInfo.Filename);
+      RunWorkingDir:=ExtractFilePath(Filename);
     if not GlobalMacroList.SubstituteStr(RunWorkingDir) then begin
       Result:=mrCancel;
       exit;
     end;
     if HasShebang then
-      DefRunCommand:='instantfpc'+ExeExt+' '+ActiveUnitInfo.Filename
+      DefRunCommand:='instantfpc'+ExeExt+' '+Filename
     else
       DefRunCommand:=IDEDirDefaultRunCommand;
     RunCommand:=GetIDEStringDirective(DirectiveList,
-                                    IDEDirectiveNames[idedRunCommand],
-                                    DefRunCommand);
+                                      IDEDirectiveNames[idedRunCommand],
+                                      DefRunCommand);
     if (not GlobalMacroList.SubstituteStr(RunCommand)) then
       exit(mrCancel);
     if (RunCommand='') then
@@ -7381,10 +7664,12 @@ begin
 
     ExtTool:=TIDEExternalToolOptions.Create;
     try
-      ExtTool.Title:='Run File '+ActiveUnitInfo.Filename;
+      ExtTool.Title:='Run File '+Filename;
       ExtTool.WorkingDirectory:=RunWorkingDir;
       ExtTool.CmdLineParams:=Params;
       ExtTool.Executable:=ProgramFilename;
+      if idedrfMessages in RunFlags then
+        ExtTool.Scanners.Add(SubToolDefault);
       if RunExternalTool(ExtTool) then
         Result:=mrOk
       else
@@ -7398,7 +7683,7 @@ begin
   end;
 end;
 
-function TMainIDE.DoConfigBuildFile: TModalResult;
+function TMainIDE.DoConfigureBuildFile: TModalResult;
 var
   ActiveSrcEdit: TSourceEditor;
   ActiveUnitInfo: TUnitInfo;
@@ -7416,7 +7701,7 @@ begin
   end;
   DirectiveList:=TStringList.Create;
   try
-    Result:=GetIDEDirectives(ActiveUnitInfo,DirectiveList);
+    Result:=GetIDEDirectives(ActiveUnitInfo.Filename,DirectiveList);
     if Result<>mrOk then exit;
 
     BuildFileDialog:=TBuildFileDialog.Create(nil);
@@ -7428,7 +7713,7 @@ begin
       BuildFileDialog.Filename:=
         CreateRelativePath(ActiveUnitInfo.Filename,Project1.ProjectDirectory);
       if BuildFileDialog.ShowModal<>mrOk then begin
-        DebugLn(['TMainIDE.DoConfigBuildFile cancelled']);
+        DebugLn(['Error: (lazarus) TMainIDE.DoConfigBuildFile cancelled']);
         Result:=mrCancel;
         exit;
       end;
@@ -7466,23 +7751,29 @@ begin
   Result:=mrOk;
 end;
 
-function TMainIDE.GetIDEDirectives(AnUnitInfo: TUnitInfo;
-  DirectiveList: TStrings): TModalResult;
+function TMainIDE.GetIDEDirectives(aFilename: string; DirectiveList: TStrings
+  ): TModalResult;
 var
-  CodeResult: Boolean;
+  AnUnitInfo: TUnitInfo;
+  Code: TCodeBuffer;
 begin
   Result:=mrCancel;
-  if FilenameIsPascalSource(AnUnitInfo.Filename) then begin
+  if FilenameIsPascalSource(aFilename) then begin
     // parse source for IDE directives (i.e. % comments)
-    CodeResult:=CodeToolBoss.GetIDEDirectives(AnUnitInfo.Source,DirectiveList,@FilterIDEDirective);
-    if not CodeResult then begin
+    Result:=LoadCodeBuffer(Code,aFilename,[lbfUpdateFromDisk],false);
+    if Result<>mrOk then exit;
+    if not CodeToolBoss.GetIDEDirectives(Code,DirectiveList,@FilterIDEDirective)
+    then begin
       DoJumpToCodeToolBossError;
       exit;
     end;
-  end else begin
+  end else if Project1<>nil then begin
+    AnUnitInfo:=Project1.UnitInfoWithFilename(aFilename);
+    if AnUnitInfo=nil then exit;
     StringToStringList(AnUnitInfo.CustomData['IDEDirectives'],DirectiveList);
     //DebugLn(['TMainIDE.GetIDEDirectives ',dbgstr(DirectiveList.Text)]);
-  end;
+  end else
+    exit;
   Result:=mrOk;
 end;
 
@@ -7615,7 +7906,7 @@ begin
   Result:=mrOk;
   if ToolStatus=itDebugger then begin
     Result:=IDEQuestionDialog(lisStopDebugging2, lisStopCurrentDebuggingAndRebuildProject,
-                              mtConfirmation,[mrYes, mrCancel, lisNo],'');
+                              mtConfirmation,[mrYes, mrCancel, rsmbNo],'');
     if Result<>mrYes then exit;
 
     Result:=DebugBoss.DoStopProject;
@@ -7850,7 +8141,6 @@ begin
   end;
   MainIDEBar.Caption := NewCaption;
   Application.Title := NewTitle;
-  TSetBuildModeToolButton.UpdateHints;
 end;
 
 procedure TMainIDE.HideIDE;
@@ -7888,7 +8178,7 @@ begin
   for i:=0 to HiddenWindowsOnRun.Count-1 do
   begin
     AForm:=TCustomForm(HiddenWindowsOnRun[i]);
-    if (AForm.Designer <> nil) or (csDesigning in AForm.ComponentState) then
+    if IsFormDesign(AForm) then
     begin
       {$IFDEF DEBUGHIDEIDEWINDOWSONRUN}
       DebugLn('TMainIDE.HideIDE: HIDING VIA LCLINTF ',dbgsName(AForm),' WindowState ',dbgs(AForm.WindowState),
@@ -7943,7 +8233,7 @@ begin
   for i := HiddenWindowsOnRun.Count - 1 downto 0 do
   begin
     AForm:=TCustomForm(HiddenWindowsOnRun[i]);
-    if (csDesigning in AForm.ComponentState) or (AForm.Designer <> nil) then
+    if IsFormDesign(AForm) then
     begin
       {$IFDEF DEBUGHIDEIDEWINDOWSONRUN}
       DebugLn('TMainIDE.UnhideIDE: Showing LCLIntf AForm ',dbgsName(AForm),
@@ -8112,7 +8402,7 @@ begin
     DoJumpToCodePosition(AEditor, ActiveUnitInfo,
       NewSource, NewX, NewY, NewTopLine, [jfAddJumpPoint, jfFocusEditor]);
   end else begin
-    DebugLn(['TMainIDE.OnPropHookShowMethod failed finding the method in code']);
+    DebugLn(['Error: (lazarus) TMainIDE.OnPropHookShowMethod failed finding the method in code']);
     DoJumpToCodeToolBossError;
     raise Exception.Create(lisUnableToShowMethod+' '+lisPleaseFixTheErrorInTheMessageWindow);
   end;
@@ -8123,6 +8413,7 @@ procedure TMainIDE.DoShowDesignerFormOfSrc(AEditor: TSourceEditorInterface;
 var
   ActiveUnitInfo: TUnitInfo;
   UnitCodeBuf: TCodeBuffer;
+  aFilename: String;
 begin
   {$IFDEF VerboseIDEDisplayState}
   debugln(['TMainIDE.DoShowDesignerFormOfCurrentSrc ']);
@@ -8131,16 +8422,26 @@ begin
   if (ActiveUnitInfo = nil) then exit;
 
   if (ActiveUnitInfo.Component=nil)
-  and (ActiveUnitInfo.Source<>nil)
-  and (CompareFileExt(ActiveUnitInfo.Filename,'.inc',false)=0) then begin
-    // include file => get unit
-    UnitCodeBuf:=CodeToolBoss.GetMainCode(ActiveUnitInfo.Source);
-    if (UnitCodeBuf<>nil) and (UnitCodeBuf<>ActiveUnitInfo.Source) then begin
-      // unit found
-      ActiveUnitInfo:=Project1.ProjectUnitWithFilename(UnitCodeBuf.Filename);
-      if (ActiveUnitInfo=nil) or (ActiveUnitInfo.OpenEditorInfoCount=0) then begin
-        // open unit in source editor and load form
-        DoOpenEditorFile(UnitCodeBuf.Filename,-1,-1,
+  and (ActiveUnitInfo.Source<>nil) then begin
+    if (CompareFileExt(ActiveUnitInfo.Filename,'.inc',false)=0) then begin
+      // include file => get unit
+      UnitCodeBuf:=CodeToolBoss.GetMainCode(ActiveUnitInfo.Source);
+      if (UnitCodeBuf<>nil) and (UnitCodeBuf<>ActiveUnitInfo.Source) then begin
+        // unit found
+        ActiveUnitInfo:=Project1.ProjectUnitWithFilename(UnitCodeBuf.Filename);
+        if (ActiveUnitInfo=nil) or (ActiveUnitInfo.OpenEditorInfoCount=0) then begin
+          // open unit in source editor and load form
+          DoOpenEditorFile(UnitCodeBuf.Filename,-1,-1,
+            [ofOnlyIfExists,ofRegularFile,ofVirtualFile,ofDoLoadResource]);
+          exit;
+        end;
+      end;
+    end;
+    if (CompareFileExt(ActiveUnitInfo.Filename,'.lfm',false)=0) then begin
+      // lfm file => get unit
+      aFilename:=GetUnitFileOfLFM(ActiveUnitInfo.Filename);
+      if aFilename<>'' then begin
+        DoOpenEditorFile(aFilename,-1,-1,
           [ofOnlyIfExists,ofRegularFile,ofVirtualFile,ofDoLoadResource]);
         exit;
       end;
@@ -8256,6 +8557,8 @@ begin
   end;
 
   if SearchedFilename<>'' then begin
+    // save last jump point (must be before editor change)
+    SourceEditorManager.AddJumpPointClicked(Self);
     // open the file in the source editor
     AnUnitInfo := nil;
     if Project1<>nil then
@@ -8271,7 +8574,6 @@ begin
       Result:=(DoOpenEditorFile(SearchedFilename,-1,-1,OpenFlags)=mrOk);
     if Result then begin
       // set caret position
-      SourceEditorManager.AddJumpPointClicked(Self);
       SrcEdit:=SourceEditorManager.ActiveEditor;
       if LogCaretXY.Y>SrcEdit.EditorComponent.Lines.Count then
         LogCaretXY.Y:=SrcEdit.EditorComponent.Lines.Count;
@@ -8463,24 +8765,13 @@ end;
 
 procedure TMainIDE.OnDesignerComponentAdded(Sender: TObject;
   AComponent: TComponent; ARegisteredComponent: TRegisteredComponent);
-var
-  Grid: TOICustomPropertyGrid;
-  Row: TOIPropertyGridRow;
 begin
   TComponentPalette(IDEComponentPalette).DoAfterComponentAdded(TDesigner(Sender).LookupRoot,
                                                AComponent, ARegisteredComponent);
-  if EnvironmentOptions.CreateComponentFocusNameProperty
-  and (ObjectInspector1<>nil) then begin
-    if (ObjectInspector1.ShowFavorites) and (EnvironmentOptions.SwitchToFavoritesOITab) then
-      Grid:=ObjectInspector1.FavoriteGrid
-    else
-      Grid:=ObjectInspector1.PropertyGrid;
-     ObjectInspector1.ActivateGrid(Grid);
-     Row:=Grid.GetRowByPath('Name');
-     if Row<>nil then begin
-       Grid.ItemIndex:=Row.Index;
-       ObjectInspector1.FocusGrid(Grid);
-     end;
+  if (ObjectInspector1 <> nil) then
+  begin
+    fOIActivateLastRow := True;
+    OIChangedTimer.AutoEnabled := True;
   end;
 end;
 
@@ -8504,7 +8795,8 @@ var
   BinCompStream: TMemoryStream;
   c: Char;
 begin
-  DebugLn('TMainIDE.OnDesignerPasteComponent A');
+  if ConsoleVerbosity>0 then
+    DebugLn('Hint: (lazarus) TMainIDE.OnDesignerPasteComponent A');
 
   // check the class of the new component
   NewClassName:=FindLFMClassName(TxtCompStream);
@@ -8519,7 +8811,8 @@ begin
   end;
 
   // check if there is a valid parent
-  if (ParentControl=nil) and ARegComp.IsTControl then begin
+  if (ParentControl=nil) and ARegComp.ComponentClass.InheritsFrom(TControl) then
+  begin
     IDEMessageDialog(lisControlNeedsParent,
       Format(lisTheClassIsATControlAndCanNotBePastedOntoANonContro,[NewClassName,LineEnding]),
       mtError,[mbCancel]);
@@ -8550,7 +8843,7 @@ begin
     FormEditor1.CreateChildComponentsFromStream(BinCompStream,
                 ARegComp.ComponentClass,LookupRoot,ParentControl,NewComponents);
     if NewComponents.Count=0 then begin
-      DebugLn('TMainIDE.OnDesignerPasteComponent FAILED FormEditor1.CreateChildComponentFromStream');
+      DebugLn('Error: (lazarus) TMainIDE.OnDesignerPasteComponent FAILED FormEditor1.CreateChildComponentFromStream');
       exit;
     end;
 
@@ -8576,7 +8869,7 @@ begin
   if dfDestroyingForm in TDesigner(Sender).Flags then exit;
   if APersistent=nil then ;
   if ObjectInspector1<>nil then
-    ObjectInspector1.FillPersistentComboBox;
+    ObjectInspector1.FillComponentList;
 end;
 
 procedure TMainIDE.OnPropHookPersistentDeleting(APersistent: TPersistent);
@@ -8677,7 +8970,7 @@ end;
 procedure TMainIDE.OnControlSelectionFormChanged(Sender: TObject; OldForm,
   NewForm: TCustomForm);
 begin
-  if (TheControlSelection=nil) or (FormEditor1=nil) or not FIDEStarted then exit;
+  if (TheControlSelection=nil) or (FormEditor1=nil) then exit;
   if OldForm<>nil then
     OldForm.Invalidate;
   if TheControlSelection.LookupRoot<>nil then
@@ -8688,7 +8981,8 @@ begin
   DebugLn('***');
   DebugLn('** TMainIDE.OnControlSelectionFormChanged: Calling UpdateIDEComponentPalette(true)');
   {$ENDIF}
-  MainIDEBar.UpdateIDEComponentPalette(true);
+  if FIDEStarted then
+    MainIDEBar.UpdateIDEComponentPalette(true);
 end;
 
 procedure TMainIDE.OnGetDesignerSelection(const ASelection: TPersistentSelectionList);
@@ -9086,13 +9380,14 @@ begin
       Result:=TObject(Method.Data).MethodName(Method.Code)
     else
       Result:='';
-  end else if IsJITMethod(Method) then begin
+  end
+  else if IsJITMethod(Method) then begin
     JITMethod:=TJITMethod(Method.Data);
     Result:=JITMethod.TheMethodName;
     if PropOwner is TComponent then begin
       LookupRoot:=GetLookupRootForComponent(TComponent(PropOwner));
       if LookupRoot is TComponent then begin
-        //DebugLn(['TMainIDE.OnPropHookGetMethodName ',Result,' ',dbgsName(GlobalDesignHook.LookupRoot),' ',dbgsName(JITMethod.TheClass)]);
+        //DebugLn(['TMainIDE.OnCodeToolBossGetMethodName ',Result,' GlobalDesignHook.LookupRoot=',dbgsName(GlobalDesignHook.LookupRoot),' JITMethod.TheClass=',dbgsName(JITMethod.TheClass),' PropOwner=',DbgSName(PropOwner),' PropOwner-LookupRoot=',DbgSName(LookupRoot)]);
         if (LookupRoot.ClassType<>JITMethod.TheClass) then begin
           Result:=JITMethod.TheClass.ClassName+'.'+Result;
         end;
@@ -9102,7 +9397,7 @@ begin
     Result:='';
   {$IFDEF VerboseDanglingComponentEvents}
   if IsJITMethod(Method) then
-    DebugLn(['TMainIDE.OnPropHookGetMethodName ',Result,' ',IsJITMethod(Method)]);
+    DebugLn(['TMainIDE.OnCodeToolBossGetMethodName ',Result,' ',IsJITMethod(Method)]);
   {$ENDIF}
 end;
 
@@ -9145,7 +9440,7 @@ begin
     FuncData^.Result:=Project1.CompilerOptions.GetUnitPath(false)
   else begin
     FuncData^.Result:='<unknown parameter for CodeTools Macro project:"'+Param+'">';
-    debugln('TMainIDE.MacroFunctionProject WARNING: ',FuncData^.Result);
+    debugln('Warning: (lazarus) TMainIDE.MacroFunctionProject: ',FuncData^.Result);
   end;
 end;
 
@@ -9180,7 +9475,7 @@ var
 begin
   Result:=mrCancel;
   if NewSource=nil then begin
-    DebugLn(['TMainIDE.DoJumpToCodePosition ERROR: missing NewSource']);
+    DebugLn(['Error: (lazarus) TMainIDE.DoJumpToCodePosition missing NewSource']);
     DumpStack;
     exit;
   end;
@@ -9301,18 +9596,20 @@ begin
 end;
 
 procedure TMainIDE.LazInstancesStartNewInstance(const aFiles: TStrings;
-  var Result: TStartNewInstanceResult);
+  var Result: TStartNewInstanceResult; var outSourceWindowHandle: HWND);
 var
   xParams: TDoDropFilesAsyncParams;
   I: Integer;
 begin
+  if EnvironmentOptions.MultipleInstances = mioAlwaysStartNew then
+  begin
+    Result:=ofrStartNewInstance;
+    exit;
+  end;
+
   if aFiles.Count > 0 then
   begin
     //there are files to open
-    if EnvironmentOptions.MultipleInstances = mioAlwaysStartNew then
-    begin//the user wants to open them in new instance!
-      Result := ofrStartNewInstance;
-    end else
     if (not IsWindowEnabled(Application.MainForm.Handle) or//check that main is active
        (Application.ModalLevel > 0))//check that no modal window is opened
     then
@@ -9331,6 +9628,11 @@ begin
     else
       Result := ofrStartNewInstance;
   end;
+
+  if  (SourceEditorManager.ActiveSourceWindow <> nil)
+  and (SourceEditorManager.ActiveSourceWindow.HandleAllocated)
+  then
+    outSourceWindowHandle := SourceEditorManager.ActiveSourceWindow.Handle;
 
   if Result in [ofrStartNewInstance, ofrModalError, ofrForceSingleInstanceModalError]  then
     Exit;
@@ -9392,7 +9694,8 @@ begin
   if (Screen.GetCurrentModalForm<>nil) or (CodeToolBoss.ErrorMessage='') then
   begin
     SourceFileMgr.UpdateSourceNames;
-    debugln('TMainIDE.DoJumpToCodeToolBossError No errormessage');
+    if ConsoleVerbosity>0 then
+      debugln('Note: (lazarus) TMainIDE.DoJumpToCodeToolBossError No errormessage');
     exit;
   end;
   // syntax error -> show error and jump
@@ -9452,9 +9755,13 @@ procedure TMainIDE.DoFindDeclarationAtCaret(const LogCaretXY: TPoint);
 var
   ActiveSrcEdit: TSourceEditor;
   ActiveUnitInfo: TUnitInfo;
-  NewSource: TCodeBuffer;
-  NewX, NewY, NewTopLine: integer;
+  NewSource, BodySource: TCodeBuffer;
+  NewX, NewY, NewTopLine, BodyX, BodyY, BodyTopLine, NewCleanPos: integer;
   FindFlags: TFindSmartFlags;
+  RevertableJump, JumpToBody, JumpToBodySuccess: boolean;
+  NewTool: TCodeTool;
+  NewOrigPos: TCodeXYPosition;
+  ProcNode, ImplementationNode: TCodeTreeNode;
 begin
   ActiveSrcEdit:=nil;
   if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[]) then exit;
@@ -9464,6 +9771,20 @@ begin
   {$ENDIF}
   {$IFDEF IDE_MEM_CHECK}CheckHeapWrtMemCnt('TMainIDE.DoFindDeclarationAtCaret A');{$ENDIF}
   //DebugLn(['TMainIDE.DoFindDeclarationAtCaret LogCaretXY=',dbgs(LogCaretXY),' SynEdit.Log=',dbgs(ActiveSrcEdit.EditorComponent.LogicalCaretXY),' SynEdit.Caret=',dbgs(ActiveSrcEdit.EditorComponent.CaretXY)]);
+
+  // do not jump twice, check if current node is procedure
+  JumpToBody := False;
+  if CodeToolsOpts.JumpToMethodBody
+  and CodeToolBoss.Explore(ActiveSrcEdit.CodeBuffer, NewTool, false, false) then
+  begin
+    NewOrigPos := CodeXYPosition(LogCaretXY.X, LogCaretXY.Y, ActiveSrcEdit.CodeBuffer);
+    if NewTool.CaretToCleanPos(NewOrigPos, NewCleanPos) = 0 then
+    begin
+      ProcNode := NewTool.FindDeepestNodeAtPos(NewCleanPos,False);
+      JumpToBody := (ProcNode=nil) or (ProcNode.Desc <> ctnProcedureHead);
+    end;
+  end;
+
   FindFlags := DefaultFindSmartFlags;
   if CodeToolsOpts.SkipForwardDeclarations then
     Include(FindFlags, fsfSkipClassForward);
@@ -9471,8 +9792,27 @@ begin
     LogCaretXY.X, LogCaretXY.Y, NewSource, NewX, NewY, NewTopLine, FindFlags )
   then begin
     //debugln(['TMainIDE.DoFindDeclarationAtCaret ',NewSource.Filename,' NewX=',Newx,',y=',NewY,' ',NewTopLine]);
-    DoJumpToCodePosition(ActiveSrcEdit, ActiveUnitInfo,
-      NewSource, NewX, NewY, NewTopLine, [jfAddJumpPoint, jfFocusEditor]);
+    JumpToBodySuccess := False;
+    if JumpToBody
+    and CodeToolBoss.Explore(NewSource, NewTool, false, false) then
+    begin
+      NewOrigPos := CodeXYPosition(NewX, NewY, NewSource);
+      if (NewTool.CaretToCleanPos(NewOrigPos, NewCleanPos) = 0) then
+      begin
+        ProcNode := NewTool.FindDeepestNodeAtPos(NewCleanPos,False);
+        ImplementationNode := NewTool.FindImplementationNode;
+        if (ProcNode<>nil) and (ProcNode.Desc = ctnProcedureHead)
+        and (ImplementationNode<>nil) and (ProcNode.StartPos<ImplementationNode.StartPos)
+        and(CodeToolBoss.JumpToMethod(NewSource,
+          NewX,NewY,BodySource,BodyX,BodyY,BodyTopLine,RevertableJump))
+        then
+          JumpToBodySuccess := DoJumpToCodePosition(ActiveSrcEdit, ActiveUnitInfo,
+            BodySource, BodyX, BodyY, BodyTopLine, [jfAddJumpPoint, jfFocusEditor]) = mrOK;
+      end;
+    end;
+    if not JumpToBodySuccess then
+      DoJumpToCodePosition(ActiveSrcEdit, ActiveUnitInfo,
+        NewSource, NewX, NewY, NewTopLine, [jfAddJumpPoint, jfFocusEditor]);
   end else begin
     DoJumpToCodeToolBossError;
   end;
@@ -9586,7 +9926,7 @@ begin
     Result:=ShowFindRenameIdentifierDialog(DeclarationUnitInfo.Source.Filename,
       DeclarationCaretXY,true,Rename,nil);
     if Result<>mrOk then begin
-      debugln('TMainIDE.DoFindRenameIdentifier failed: user cancelled dialog');
+      debugln('Error: (lazarus) TMainIDE.DoFindRenameIdentifier failed: user cancelled dialog');
       exit;
     end;
 
@@ -9630,7 +9970,7 @@ begin
     // add user defined extra files
     Result:=AddExtraFiles(Files);
     if Result<>mrOk then begin
-      debugln('TMainIDE.DoFindRenameIdentifier unable to add user defined extra files');
+      debugln('Error: (lazarus) TMainIDE.DoFindRenameIdentifier unable to add user defined extra files');
       exit;
     end;
 
@@ -9640,7 +9980,7 @@ begin
     if CodeToolBoss.ErrorMessage<>'' then
       DoJumpToCodeToolBossError;
     if Result<>mrOk then begin
-      debugln('TMainIDE.DoFindRenameIdentifier GatherIdentifierReferences failed');
+      debugln('Error: (lazarus) TMainIDE.DoFindRenameIdentifier GatherIdentifierReferences failed');
       exit;
     end;
 
@@ -9649,7 +9989,7 @@ begin
     Result:=GatherFPDocReferencesForPascalFiles(Files,DeclarationUnitInfo.Source,
                                   DeclarationCaretXY,ListOfLazFPDocNode);
     if Result<>mrOk then begin
-      debugln('TMainIDE.DoFindRenameIdentifier GatherFPDocReferences failed');
+      debugln('Error: (lazarus) TMainIDE.DoFindRenameIdentifier GatherFPDocReferences failed');
       exit;
     end;
     {$ENDIF}
@@ -9674,7 +10014,7 @@ begin
           Identifier,Options.RenameTo, DeclarationUnitInfo.Source, @DeclarationCaretXY)
         then begin
           DoJumpToCodeToolBossError;
-          debugln('TMainIDE.DoFindRenameIdentifier unable to commit');
+          debugln('Error: (lazarus) TMainIDE.DoFindRenameIdentifier unable to commit');
           Result:=mrCancel;
           exit;
         end;
@@ -9792,9 +10132,24 @@ begin
   Result:=ShowUnusedUnitsDialog;
 end;
 
-function TMainIDE.DoUseUnit: TModalResult;
+function TMainIDE.DoUseUnitDlg(DlgType: TUseUnitDialogType): TModalResult;
+var
+  TempEditor: TSourceEditorInterface;
+  DefText: String;
 begin
-  Result:=ShowUseUnitDialog;
+  DefText:='';
+  TempEditor := SourceEditorManagerIntf.ActiveEditor;
+  if TempEditor <> nil then
+  begin
+    if EditorOpts.FindTextAtCursor then
+    begin
+      if TempEditor.SelectionAvailable and (TempEditor.BlockBegin.Y = TempEditor.BlockEnd.Y)
+      then DefText := TempEditor.Selection
+      else DefText := TSynEdit(TempEditor.EditorControl).GetWordAtRowCol(TempEditor.CursorTextXY);
+    end;
+  end;
+
+  Result:=ShowUseUnitDialog(DefText, DlgType);
 end;
 
 function TMainIDE.DoFindOverloads: TModalResult;
@@ -10157,13 +10512,13 @@ begin
   end;
 end;
 
-procedure TMainIDE.DoCompleteCodeAtCursor;
+procedure TMainIDE.DoCompleteCodeAtCursor(Interactive: Boolean);
 var
   ActiveSrcEdit: TSourceEditor;
   ActiveUnitInfo: TUnitInfo;
   NewSource: TCodeBuffer;
   NewX, NewY, NewTopLine: integer;
-  OldChange: Boolean;
+  OldChange, CCRes: Boolean;
 begin
   OldChange:=OpenEditorsOnCodeToolChange;
   OpenEditorsOnCodeToolChange:=true;
@@ -10174,11 +10529,11 @@ begin
     debugln('');
     debugln('[TMainIDE.DoCompleteCodeAtCursor] ************');
     {$ENDIF}
-    CodeToolBoss.CompleteCode(ActiveUnitInfo.Source,
+    CCRes := CodeToolBoss.CompleteCode(ActiveUnitInfo.Source,
       ActiveSrcEdit.EditorComponent.CaretX,
       ActiveSrcEdit.EditorComponent.CaretY,
       ActiveSrcEdit.EditorComponent.TopLine,
-      NewSource,NewX,NewY,NewTopLine);
+      NewSource,NewX,NewY,NewTopLine, Interactive);
     if (CodeToolBoss.ErrorMessage='')
     and (CodeToolBoss.SourceChangeCache.BuffersToModifyCount=0) then
       CodeToolBoss.SetError(nil,0,0,'there is no completion for this code');
@@ -10187,6 +10542,7 @@ begin
       DoJumpToCodePosition(ActiveSrcEdit, ActiveUnitInfo,
         NewSource, NewX, NewY, NewTopLine, [jfAddJumpPoint, jfFocusEditor])
     else
+    if not CCRes then
       DoJumpToCodeToolBossError;
   finally
     OpenEditorsOnCodeToolChange:=OldChange;
@@ -10241,6 +10597,15 @@ procedure TMainIDE.JumpHistoryViewSelectionChanged(sender : TObject);
 begin
   SourceEditorManager.HistoryJump(self, jhaViewWindow);
   SourceEditorManager.ShowActiveWindowOnTop(True);
+end;
+
+procedure TMainIDE.LazInstancesGetOpenedProjectFileName(
+  var outProjectFileName: string);
+begin
+  if Project1<>nil then
+    outProjectFileName := Project1.MainFilename
+  else
+    outProjectFileName := '';
 end;
 
 procedure TMainIDE.OnSrcNotebookEditorActived(Sender: TObject);
@@ -10560,8 +10925,8 @@ end;
 
 procedure TMainIDE.OnSrcNotebookCurCodeBufferChanged(Sender: TObject);
 begin
-  if SourceEditorManager.SourceEditorCount = 0 then Exit;
-  if CodeExplorerView<>nil then CodeExplorerView.CurrentCodeBufferChanged;
+  if CodeExplorerView<>nil then
+    CodeExplorerView.CurrentCodeBufferChanged;
 end;
 
 procedure TMainIDE.OnSrcNotebookShowHintForSource(SrcEdit: TSourceEditor;
@@ -10730,7 +11095,7 @@ begin
     case IDEQuestionDialog(lisSaveChanges,
           Format(lisSaveFileBeforeClosingForm,
                  [AnUnitInfo.Filename, LineEnding, ADesigner.LookupRoot.Name]),
-          mtConfirmation,[mrYes,mrNoToAll,lisNo,mrCancel],'') of
+          mtConfirmation,[mrYes,mrNoToAll,rsmbNo,mrCancel],'') of
       mrYes: begin
         if DoSaveEditorFile(ASrcEdit,[sfCheckAmbiguousFiles])<>mrOk
         then Exit;
@@ -10845,7 +11210,8 @@ var
             FRenamingComponents:=TFPList.Create;
           FRenamingComponents.Add(InheritedComponent);
           try
-            DebugLn(['RenameInheritedComponents ',dbgsName(InheritedComponent),' Owner=',dbgsName(InheritedComponent.Owner)]);
+            if ConsoleVerbosity>0 then
+              DebugLn(['Hint: (lazarus) RenameInheritedComponents ',dbgsName(InheritedComponent),' Owner=',dbgsName(InheritedComponent.Owner)]);
             if Simulate then begin
               // only check if rename is possible
               if (InheritedComponent.Owner<>nil)
@@ -10915,7 +11281,8 @@ var
                        Root,AComponent,Root.ClassName,NewName,PropInfo^.Name);
         if (CurMethodName=NewMethodName) then continue;
         // auto rename it
-        DebugLn(['RenameMethods OldMethodName="',DefaultName,'" NewMethodName="',NewMethodName,'"']);
+        if ConsoleVerbosity>0 then
+          DebugLn(['Hint: (lazarus) RenameMethods OldMethodName="',DefaultName,'" NewMethodName="',NewMethodName,'"']);
 
         // rename/create published method in source
         CTResult:=CodeToolBoss.RenamePublishedMethod(ActiveUnitInfo.Source,
@@ -10932,7 +11299,7 @@ var
         end else begin
           // unable to rename method in source
           // this is just a nice to have feature -> ignore the error
-          DebugLn(['TMainIDE.OnDesignerRenameComponent.RenameMethods failed OldMethodName="',CurMethodName,'" NewMethodName="',NewMethodName,'" Error=',CodeToolBoss.ErrorMessage]);
+          DebugLn(['Error: (lazarus) TMainIDE.OnDesignerRenameComponent.RenameMethods failed OldMethodName="',CurMethodName,'" NewMethodName="',NewMethodName,'" Error=',CodeToolBoss.ErrorMessage]);
         end;
       end;
       ApplyCodeToolChanges;
@@ -10951,8 +11318,8 @@ var
   s: String;
   OldOpenEditorsOnCodeToolChange: Boolean;
 begin
-  DebugLn('TMainIDE.OnDesignerRenameComponent Old=',AComponent.Name,':',AComponent.ClassName,' New=',NewName,' Owner=',dbgsName(AComponent.Owner));
-  if (not IsValidIdent(NewName)) or (NewName='') then
+  DebugLn('Hint: (lazarus) TMainIDE.OnDesignerRenameComponent Old=',AComponent.Name,':',AComponent.ClassName,' New=',NewName,' Owner=',dbgsName(AComponent.Owner));
+  if not IsValidIdent(NewName) then
     raise Exception.Create(Format(lisComponentNameIsNotAValidIdentifier, [Newname]));
   if WordIsKeyWord.DoItCaseInsensitive(PChar(NewName))
   or WordIsDelphiKeyWord.DoItCaseInsensitive(PChar(NewName))
@@ -11083,7 +11450,7 @@ var
 begin
   ADesigner:=TDesigner(Sender);
   GetDesignerUnit(ADesigner,ASrcEdit,AnUnitInfo);
-  debugln('TMainIDE.OnDesignerViewLFM ',AnUnitInfo.Filename);
+  debugln('Hint: (lazarus) TMainIDE.OnDesignerSaveAsXML ',AnUnitInfo.Filename);
 
   SaveAsFileExt:='.xml';
   SaveAsFilename:=ChangeFileExt(AnUnitInfo.Filename,SaveAsFileExt);
@@ -11521,7 +11888,7 @@ begin
     begin
       AForm:=Screen.CustomFormsZOrdered[i];
       if (AForm.Parent=nil) and (AForm<>MainIDEBar) and (AForm.IsVisible)
-      and (AForm.Designer=nil) and (not (csDesigning in AForm.ComponentState))
+      and not IsFormDesign(AForm)
       and not (fsModal in AForm.FormState) then
         LastActivatedWindows.Add(AForm);
     end;
@@ -11633,10 +12000,36 @@ begin
   AComponentClass := DoSelectFrame;
 end;
 
+procedure TMainIDE.ForwardKeyToObjectInspector(Sender: TObject; Key: TUTF8Char);
+var
+  Kind: TTypeKind;
+begin
+  CreateObjectInspector(False);
+  IDEWindowCreators.ShowForm(ObjectInspector1, True);
+  if ObjectInspector1.IsVisible then
+  begin
+    ObjectInspector1.FocusGrid;
+    if ObjectInspector1.GetActivePropertyGrid.CanEditRowValue(False) then
+    begin
+      Kind := ObjectInspector1.GetActivePropertyGrid.GetActiveRow.Editor.GetPropType^.Kind;
+      if Kind in [tkInteger, tkInt64, tkSString, tkLString, tkAString, tkWString, tkUString] then
+      begin
+        ObjectInspector1.GetActivePropertyGrid.CurrentEditValue := Key;
+        ObjectInspector1.GetActivePropertyGrid.FocusCurrentEditor;
+      end;
+    end
+  end;
+  case DisplayState of
+    dsSource: DisplayState := dsInspector;
+    dsForm: DisplayState := dsInspector2;
+  end;
+end;
+
 procedure TMainIDE.OIChangedTimerTimer(Sender: TObject);
 var
   OI: TObjectInspectorDlg;
-  ARow: TOIPropertyGridRow;
+  Row: TOIPropertyGridRow;
+  Grid: TOICustomPropertyGrid;
   Code: TCodeBuffer;
   Caret: TPoint;
   i: integer;
@@ -11650,17 +12043,37 @@ begin
   OIChangedTimer.AutoEnabled:=false;
   OIChangedTimer.Enabled:=false;
 
+  // Select again the last grid / property after a new component was added
+  if fOIActivateLastRow then
+  begin
+    fOIActivateLastRow := False;
+    if EnvironmentOptions.CreateComponentFocusNameProperty then
+    begin
+      if (OI.ShowFavorites) and (EnvironmentOptions.SwitchToFavoritesOITab) then
+        Grid := OI.FavoriteGrid
+      else
+        Grid := OI.PropertyGrid;
+      Row := Grid.GetRowByPath('Name');
+    end
+    else begin //focus to the last active property(row)
+      Grid := OI.PropertyGrid;
+      Row := Grid.GetRowByPath(OI.LastActiveRowName);
+    end;
+    if Row <> nil then
+    begin
+      OI.ActivateGrid(Grid);
+      OI.FocusGrid(Grid);
+      Grid.ItemIndex := Row.Index;
+     end;
+  end
+  else
+    Row := OI.GetActivePropertyRow;
+
+  // Get help text for this property
   if not BeginCodeTools or not OI.ShowInfoBox then
     Exit;
-
-  HtmlHint := '';
-  BaseURL := '';
-  PropDetails := '';
-
-  ARow := OI.GetActivePropertyRow;
-
-  if (ARow <> nil)
-  and FindDeclarationOfOIProperty(OI, ARow, Code, Caret, i) then
+  if (Row <> nil)
+  and FindDeclarationOfOIProperty(OI, Row, Code, Caret, i) then
   begin
     if CodeHelpBoss.GetHTMLHint(Code, Caret.X, Caret.Y, [],
       BaseURL, HtmlHint, PropDetails, CacheWasUsed) <> chprSuccess then
@@ -11671,6 +12084,7 @@ begin
     end;
   end;
 
+  // Update InfoPanel contents with the help text
   if OI.InfoPanel.ControlCount > 0 then
     OI.InfoPanel.Controls[0].Visible := HtmlHint <> '';
   if HtmlHint <> '' then
@@ -11683,6 +12097,7 @@ begin
       Stream.Free;
     end;
   end;
+
   // Property details always starts with "published property". Get rid of it.
   i:=Pos(' ', PropDetails);
   if i>0 then begin
@@ -11876,6 +12291,33 @@ begin
     Result:=FormEditor1.GetDesignerForm(AnUnitInfo.Component);
   if (Result<>nil) and (Result.Designer=nil) then
     Result:=nil;
+end;
+
+function TMainIDE.GetUnitFileOfLFM(LFMFilename: string): string;
+var
+  ext: String;
+  SrcEdit: TSourceEditorInterface;
+begin
+  // first search in source editor
+  for ext in PascalExtension do begin
+    if ext='' then continue;
+    Result:=ChangeFileExt(LFMFilename,Ext);
+    SrcEdit:=SourceEditorManagerIntf.SourceEditorIntfWithFilename(Result);
+    if SrcEdit<>nil then begin
+      Result:=SrcEdit.FileName;
+      exit;
+    end;
+  end;
+  // then disk
+  for ext in PascalExtension do begin
+    if ext='' then continue;
+    Result:=ChangeFileExt(LFMFilename,Ext);
+    if FileExistsCached(Result) then begin
+      Result:=CodeToolBoss.DirectoryCachePool.FindDiskFilename(Result);
+      exit;
+    end;
+  end;
+  Result:='';
 end;
 
 function TMainIDE.GetProjectFileWithRootComponent(AComponent: TComponent
@@ -12085,7 +12527,7 @@ begin
       Result:=FormEditor1.CreateNewJITMethod(ActiveUnitInfo.Component,
                                              AMethodName);
     end else begin
-      DebugLn(['TMainIDE.OnPropHookCreateMethod failed adding method "'+AMethodName+'" to source']);
+      DebugLn(['Error: (lazarus) TMainIDE.OnPropHookCreateMethod failed adding method "'+AMethodName+'" to source']);
       DoJumpToCodeToolBossError;
       raise Exception.Create(lisUnableToCreateNewMethod+' '+lisPleaseFixTheErrorInTheMessageWindow);
     end;
@@ -12100,24 +12542,11 @@ var
   ActiveUnitInfo: TUnitInfo;
   NewSource: TCodeBuffer;
   NewX, NewY, NewTopLine: integer;
-  AClassName: string;
-  AInheritedMethodName: string;
-  AnInheritedClassName: string;
-  CurMethodName: String;
+  AClassName, AnInheritedClassName: string;
+  CurMethodName, AInheritedMethodName: string;
 begin
-  ActiveSrcEdit:=nil;
-  if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[ctfSwitchToFormSource])
-  then exit;
-  {$IFDEF IDE_DEBUG}
-  debugln('');
-  debugln('[TMainIDE.OnPropHookShowMethod] ************ "',AMethodName,'" ',ActiveUnitInfo.Filename);
-  {$ENDIF}
-
-  AClassName:=ActiveUnitInfo.Component.ClassName;
-  CurMethodName:=AMethodName;
-
-  if IsValidIdentPair(AMethodName,AnInheritedClassName,AInheritedMethodName)
-  then begin
+  if IsValidIdentPair(AMethodName, AnInheritedClassName, AInheritedMethodName) then
+  begin
     ActiveSrcEdit:=nil;
     ActiveUnitInfo:=Project1.UnitWithComponentClassName(AnInheritedClassName);
     if ActiveUnitInfo=nil then begin
@@ -12128,23 +12557,31 @@ begin
     end;
     AClassName:=AnInheritedClassName;
     CurMethodName:=AInheritedMethodName;
+  end
+  else begin
+    ActiveSrcEdit:=nil;
+    if not BeginCodeTool(ActiveSrcEdit,ActiveUnitInfo,[ctfSwitchToFormSource]) then
+      exit;
+    AClassName:=ActiveUnitInfo.Component.ClassName;
+    CurMethodName:=AMethodName;
   end;
-
+  //DebugLn('[TMainIDE.OnPropHookShowMethod] MethodName=',AMethodName,', ClassName=',AClassName,
+  //        ', CurMethodName=',CurMethodName,', ActiveUnit=',ActiveUnitInfo.Filename);
   if CodeToolBoss.JumpToPublishedMethodBody(ActiveUnitInfo.Source,
-    AClassName,CurMethodName,
-    NewSource,NewX,NewY,NewTopLine) then
+    AClassName, CurMethodName, NewSource, NewX, NewY, NewTopLine) then
   begin
     DoJumpToCodePosition(ActiveSrcEdit, ActiveUnitInfo,
       NewSource, NewX, NewY, NewTopLine, [jfAddJumpPoint, jfFocusEditor]);
   end else begin
-    DebugLn(['TMainIDE.OnPropHookShowMethod failed finding the method in code']);
+    DebugLn(['Error: (lazarus) TMainIDE.OnPropHookShowMethod failed finding the method in code']);
     DoJumpToCodeToolBossError;
     raise Exception.Create(lisUnableToShowMethod+' '+lisPleaseFixTheErrorInTheMessageWindow);
   end;
 end;
 
 procedure TMainIDE.OnPropHookRenameMethod(const CurName, NewName: String);
-var ActiveSrcEdit: TSourceEditor;
+var
+  ActiveSrcEdit: TSourceEditor;
   ActiveUnitInfo: TUnitInfo;
   BossResult: boolean;
   ErrorMsg: String;
@@ -12236,11 +12673,13 @@ begin
     ObjectInspector1.Update;
 end;
 
-procedure TMainIDE.OnPropHookModified(Sender: TObject);
+procedure TMainIDE.OnPropHookModified(Sender: TObject; PropName: ShortString);
 begin
-  // any change of property can cause a change of a display name
-  if ObjectInspector1<>nil then
-    ObjectInspector1.FillPersistentComboBox;
+  // ToDo: Should designer be marked as modified with PropName?
+  if PropName='' then ;
+  if Assigned(ObjectInspector1) then
+    // Any change of property can cause a change of a display name
+    ObjectInspector1.ComponentTree.UpdateComponentNodesValues;
 end;
 
 {-------------------------------------------------------------------------------
@@ -12262,7 +12701,8 @@ var
   ClassUnitInfo: TUnitInfo;
   i: Integer;
 begin
-  DebugLn('TMainIDE.OnPropHookPersistentAdded A ',dbgsName(APersistent));
+  if ConsoleVerbosity>0 then
+    DebugLn('Hint: (lazarus) TMainIDE.OnPropHookPersistentAdded A ',dbgsName(APersistent));
   ADesigner:=nil;
   if APersistent is TComponent then
     AComponent:=TComponent(APersistent)
@@ -12272,7 +12712,7 @@ begin
   if (RegComp=nil) and (AComponent<>nil) then begin
     ClassUnitInfo:=Project1.UnitWithComponentClass(TComponentClass(APersistent.ClassType));
     if ClassUnitInfo=nil then begin
-      DebugLn('TMainIDE.OnPropHookPersistentAdded ',APersistent.ClassName,
+      DebugLn('Error: (lazarus) TMainIDE.OnPropHookPersistentAdded ',APersistent.ClassName,
               ' not registered');
       exit;
     end;
@@ -12317,14 +12757,13 @@ begin
     CodeToolBoss.CompleteComponent(ActiveUnitInfo.Source,ADesigner.LookupRoot,Ancestor);
   end;
 
-  if ObjectInspector1<>nil then
-    ObjectInspector1.FillPersistentComboBox;
-
   //debugln('TMainIDE.OnPropHookPersistentAdded D ',AComponent.Name,':',AComponent.ClassName,' ',Select);
   // select component
-  if Select then begin
+  if Select then
     TheControlSelection.AssignPersistent(APersistent);
-  end;
+
+  if ObjectInspector1<>nil then
+    ObjectInspector1.FillComponentList;
   {$IFDEF IDE_DEBUG}
   debugln('TMainIDE.OnPropHookPersistentAdded END ',dbgsName(APersistent),' Select=',Select);
   {$ENDIF}
@@ -12336,7 +12775,7 @@ var
   AComponent: TComponent;
 begin
   if APersistent=nil then exit;
-  DebugLn('TMainIDE.OnPropHookDeletePersistent A ',dbgsName(APersistent));
+  DebugLn('Hint: (lazarus) TMainIDE.OnPropHookDeletePersistent A ',dbgsName(APersistent));
   if APersistent is TComponent then begin
     AComponent:=TComponent(APersistent);
     ADesigner:=TDesigner(FindRootDesigner(AComponent));
@@ -12362,7 +12801,7 @@ begin
   // find the current unit
   AnUnitInfo:=Project1.UnitWithComponent(TComponent(GlobalDesignHook.LookupRoot));
   if AnUnitInfo=nil then begin
-    DebugLn(['TMainIDE.OnPropHookObjectPropertyChanged LookupRoot not found']);
+    DebugLn(['Error: (lazarus) TMainIDE.OnPropHookObjectPropertyChanged LookupRoot not found']);
     exit;
   end;
   // find the reference unit
@@ -12372,7 +12811,7 @@ begin
     if ReferenceDesigner=nil then exit;
     ReferenceUnitInfo:=Project1.UnitWithComponent(ReferenceDesigner.LookupRoot);
     if ReferenceUnitInfo=nil then begin
-      DebugLn(['TMainIDE.OnPropHookObjectPropertyChanged reference LookupRoot not found']);
+      DebugLn(['Error: (lazarus) TMainIDE.OnPropHookObjectPropertyChanged reference LookupRoot not found']);
       exit;
     end;
     if ReferenceUnitInfo<>AnUnitInfo then begin
@@ -12411,7 +12850,7 @@ begin
   if not (GlobalDesignHook.LookupRoot is TComponent) then exit;
   AnUnitInfo:=Project1.UnitWithComponent(TComponent(GlobalDesignHook.LookupRoot));
   if AnUnitInfo=nil then begin
-    DebugLn(['TMainIDE.OnPropHookAddDependency LookupRoot not found']);
+    DebugLn(['Error: (lazarus) TMainIDE.OnPropHookAddDependency LookupRoot not found']);
     exit;
   end;
 
@@ -12541,7 +12980,7 @@ end;
 procedure TMainIDE.mnuEditSortBlockClicked(Sender: TObject);
 begin
   // MG: sometimes the function does nothing
-  debugln(['TMainIDE.mnuEditSortBlockClicked ',DbgSName(FindOwnerControl(GetFocus))]);
+  debugln(['Hint: (lazarus) TMainIDE.mnuEditSortBlockClicked ',DbgSName(FindOwnerControl(GetFocus))]);
   DoSourceEditorCommand(ecSelectionSort);
 end;
 
@@ -12701,9 +13140,9 @@ begin
   DoSourceEditorCommand(ecInsertCVSSource);
 end;
 
-procedure TMainIDE.mnuSourceCompleteCodeClicked(Sender: TObject);
+procedure TMainIDE.mnuSourceCompleteCodeInteractiveClicked(Sender: TObject);
 begin
-  DoCompleteCodeAtCursor;
+  DoCompleteCodeAtCursor(True);
 end;
 
 procedure TMainIDE.mnuSourceUseUnitClicked(Sender: TObject);

@@ -35,6 +35,23 @@ begin
   inherited Destroy;
 end;
 
+procedure TFileDialog.DoCanClose(var CanClose: Boolean);
+begin
+  {$ifdef DebugCommonDialogEvents}
+  debugln(['TFileDialog.DoCanClose: FUserChoice = ',ModalResultStr[FUserChoice],' HandleAllocated=',HandleAllocated]);
+  {$endif}
+  //Only call OnCanClose if user did not cancel the dialog, see:
+  //http://docwiki.embarcadero.com/Libraries/Berlin/en/Vcl.Dialogs.TOpenDialog_Events
+  if (FUserChoice = mrOK) then
+    inherited DoCanClose(CanClose)
+  else
+  begin
+    FDoCanCloseCalled := True;
+    CanClose := True;
+  end;
+end;
+
+
 
 {------------------------------------------------------------------------------}
 {  TFileDialog DoOnTypeChange                                                         }
@@ -43,14 +60,6 @@ procedure TFileDialog.DoTypeChange;
 begin
   if Assigned(FOnTypeChange) then
     OnTypeChange(Self);
-end;
-
-{------------------------------------------------------------------------------}
-{  TFileDialog Execute                                                         }
-{------------------------------------------------------------------------------}
-function TFileDialog.Execute : boolean;
-begin
-  Result:=inherited Execute;
 end;
 
 {------------------------------------------------------------------------------
@@ -197,14 +206,6 @@ class procedure TFileDialog.WSRegisterClass;
 begin
   inherited WSRegisterClass;
   RegisterFileDialog;
-end;
-
-{------------------------------------------------------------------------------
-  TFileDialog DoExecute
-------------------------------------------------------------------------------}
-function TFileDialog.DoExecute : boolean;
-begin
-  Result:= inherited DoExecute;
 end;
 
 {------------------------------------------------------------------------------
@@ -431,6 +432,18 @@ begin
   inherited Create(TheOwner);
   fCompStyle:=csOpenFileDialog;
   FOptions := DefaultOpenDialogOptions;
+end;
+
+procedure TOpenDialog.DoCanClose(var CanClose: Boolean);
+begin
+  //Delphi never calls OnCanClose in this case
+  if not (ofOldStyleDialog in Options) then
+    inherited DoCanClose(CanClose)
+  else
+  begin
+    FDoCanCloseCalled := True;
+    CanClose := True;
+  end;
 end;
 
 procedure TOpenDialog.DoFolderChange;

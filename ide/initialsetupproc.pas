@@ -467,11 +467,15 @@ begin
                                     'EnvironmentOptions/CompilerFilename/Value');
     if CheckFile(AFilename,Result) then exit;
 
+    // check environment variable PP
+    AFileName := GetEnvironmentVariableUTF8('PP');
+    if CheckFile(AFilename,Result) then exit;
+
     // search fpc(.exe) in PATH
-    if CheckFile(GetDefaultCompilerFilename,Result) then exit;
+    if CheckFile('fpc'+ExeExt,Result) then exit;
 
     // search ppccpu(.exe) in PATH
-    if CheckFile(FindDefaultCompilerPath,Result) then exit;
+    if CheckFile(GetDefaultCompilerFilename(GetCompiledTargetCPU),Result) then exit;
 
     // check history
     Files:=EnvironmentOptions.CompilerFileHistory;
@@ -480,10 +484,14 @@ begin
         if CheckFile(Files[i],Result) then exit;
 
     // check paths with versions
-    ShortCompFile:=GetDefaultCompilerFilename;
+    ShortCompFile:='fpc'+ExeExt;
+
+    // check $(LazarusDir)\fpc\3.0.0\bin\i386-win32\fpc.exe
+    if CheckFile(SetDirSeparators('$(LazarusDir)/fpc/'+{$I %FPCVERSION%}+'/bin/'+GetCompiledTargetCPU+'-'+GetCompiledTargetOS+'/')+ShortCompFile,Result)
+      then exit;
 
     // check $(LazarusDir)\fpc\bin\i386-win32\fpc.exe
-    if CheckFile(SetDirSeparators('$(LazarusDir)/fpc/bin/$(TargetCPU)-$(TargetOS)/')+ShortCompFile,Result)
+    if CheckFile(SetDirSeparators('$(LazarusDir)/fpc/bin/'+GetCompiledTargetCPU+'-'+GetCompiledTargetOS+'/')+ShortCompFile,Result)
       then exit;
 
     // check common directories
@@ -726,6 +734,10 @@ begin
                                  'EnvironmentOptions/FPCSourceDirectory/Value');
     if Check(AFilename,Result) then exit;
 
+    // check environment variable FPCDIR
+    AFileName := GetEnvironmentVariableUTF8('FPCDIR');
+    if Check(AFilename,Result) then exit;
+
     // check history
     Dirs:=EnvironmentOptions.FPCSourceDirHistory;
     if Dirs<>nil then
@@ -778,6 +790,7 @@ begin
   // Windows-only locations:
   if (GetDefaultSrcOSForTargetOS(GetCompiledTargetOS)='win') then begin
     // under Windows, make.exe is in the same directory as fpc.exe
+    // other make.exe are often incompatible
     if not FileExistsCached(ExtractFilePath(AFilename)+'fpc.exe') then begin
       Note:=Format(lisThereIsNoFpcExeInTheDirectoryOfUsuallyTheMakeExecu, [
         ExtractFilename(AFilename)]);
@@ -842,8 +855,11 @@ begin
     // Windows-only locations:
     if (GetDefaultSrcOSForTargetOS(GetCompiledTargetOS)='win') then begin
       // check make in fpc.exe directory
-      if CheckFile(SetDirSeparators('$Path($(CompPath))/make.exe'),Result)
+      if CheckFile(SetDirSeparators('$Path($(CompPath))\make.exe'),Result)
       then exit;
+      // check $(LazarusDir)\fpc\bin\i386-win32\fpc.exe
+      if CheckFile(SetDirSeparators('$(LazarusDir)\fpc\bin\$(TargetCPU)-$(TargetOS)\make.exe'),Result)
+        then exit;
     end;
 
     // check history

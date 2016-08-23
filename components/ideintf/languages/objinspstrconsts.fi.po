@@ -150,7 +150,7 @@ msgstr "Tämä hakee ja korvaa kaikki otsikot tietokannasta. Jatka?"
 
 #: objinspstrconsts.dpeunabletoretrievefieldsdefinitions
 msgid "Unable to retrieve fields definition from dataset."
-msgstr ""
+msgstr "Kenttämäärittelyjen haku tietokannasta ei onnistu."
 
 #: objinspstrconsts.fescalculated
 msgid "&Calculated"
@@ -254,7 +254,7 @@ msgstr "Lisää"
 
 #: objinspstrconsts.itcssearchandreplace
 msgid "Search and replace"
-msgstr ""
+msgstr "Etsi ja korvaa"
 
 #: objinspstrconsts.liisaddvalue
 msgid "Add value"
@@ -286,7 +286,7 @@ msgstr "Aseta arvo"
 
 #: objinspstrconsts.lisunabletofindparserfortool
 msgid "Unable to find parser for tool \"%s\""
-msgstr ""
+msgstr "Jäsentäjää työkalulle \"%s\" ei löydy"
 
 #: objinspstrconsts.nbcesaddpage
 msgid "Add Page"
@@ -411,11 +411,11 @@ msgstr "Poista?"
 
 #: objinspstrconsts.oischangeclass
 msgid "Change Class ..."
-msgstr ""
+msgstr "Vaihda luokka ..."
 
 #: objinspstrconsts.oischangeparent
 msgid "Change Parent"
-msgstr ""
+msgstr "Vaihda emo ..."
 
 #: objinspstrconsts.oischar
 msgid "Char"
@@ -465,6 +465,14 @@ msgstr "Luo oletustapahtuma"
 #: objinspstrconsts.oiscreatenewfieldandadditatcurrentposition
 msgid "Create new field and add it at current position"
 msgstr "Luo uusi kenttä ja lisää se nykyiseen kohtaan"
+
+#: objinspstrconsts.oiscurrentparent
+msgid "Current parent"
+msgstr ""
+
+#: objinspstrconsts.oiscurrentparents
+msgid "Current parents"
+msgstr ""
 
 #: objinspstrconsts.oiscutcomponents
 msgctxt "objinspstrconsts.oiscutcomponents"
@@ -689,7 +697,7 @@ msgstr "Tallenna kuva"
 
 #: objinspstrconsts.oispressakey
 msgid "Press a key ..."
-msgstr ""
+msgstr "Paina jotain näppäintä ..."
 
 #: objinspstrconsts.oisproperties
 msgid "Properties"
@@ -713,7 +721,7 @@ msgstr "Rajoitettu"
 
 #: objinspstrconsts.oisreverttoinherited
 msgid "Revert to inherited"
-msgstr ""
+msgstr "Palauta perittyyn arvoon"
 
 #: objinspstrconsts.oissamplemasks
 msgid "Sample Masks:"
@@ -742,6 +750,14 @@ msgstr "&Valitse kaikki"
 #: objinspstrconsts.oisselectallhint
 msgid "Select All Fields"
 msgstr "Valitse kaikki kentät"
+
+#: objinspstrconsts.oisselectedcontrol
+msgid "Selected control"
+msgstr ""
+
+#: objinspstrconsts.oisselectedcontrols
+msgid "Selected controls"
+msgstr ""
 
 #: objinspstrconsts.oisselectedproperties
 msgid "&Selected Properties"
@@ -778,6 +794,10 @@ msgstr "Aseta oletusarvo: %s"
 #: objinspstrconsts.oissettodefaulthint
 msgid "Set property value to Default"
 msgstr "Aseta ominaisuuden arvoksi oletus"
+
+#: objinspstrconsts.oisshowclasses
+msgid "Show classes"
+msgstr ""
 
 #: objinspstrconsts.oisshowcomponenttree
 msgid "Show Component Tree"
@@ -1296,9 +1316,17 @@ msgstr "Ei mitään"
 msgid "Add Images"
 msgstr "Lisää Kuvat"
 
+#: objinspstrconsts.sccsiledtopendialogn
+msgid "New Image"
+msgstr ""
+
 #: objinspstrconsts.sccsiledtransparentcolor
 msgid "Transparent Color:"
 msgstr "Läpinäkyvä väri:"
+
+#: objinspstrconsts.sccsiledtreplace
+msgid "&Replace ..."
+msgstr ""
 
 #: objinspstrconsts.sccsiledtsave
 msgctxt "objinspstrconsts.sccsiledtsave"
@@ -1519,6 +1547,10 @@ msgstr "Sieppaa näppäin"
 #: objinspstrconsts.s_addassingle
 msgid "Add as single"
 msgstr "Lisää yksittäisenä"
+
+#: objinspstrconsts.s_confirm_clear
+msgid "Are you sure to clear image list?"
+msgstr ""
 
 #: objinspstrconsts.s_splitimage
 msgid "Split image"

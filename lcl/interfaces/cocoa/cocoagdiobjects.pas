@@ -49,7 +49,9 @@ type
     FGlobal: Boolean;
   public
     constructor Create(AGlobal: Boolean); virtual;
+    destructor Destroy; virtual;
 
+    class function UpdateRefs(ATarget: TCocoaGDIObject; ASource: TCocoaGDIObject): Boolean; static;
     procedure AddRef;
     procedure Release;
     property Global: Boolean read FGlobal write FGlobal;
@@ -76,7 +78,7 @@ type
   strict private
     FShape: HIShapeRef;
   public
-    constructor CreateDefault;
+    constructor CreateDefault(AGlobal: Boolean = False);
     constructor Create(const X1, Y1, X2, Y2: Integer);
     constructor Create(Points: PPoint; NumPts: Integer; isAlter: Boolean);
     destructor Destroy; override;
@@ -106,7 +108,7 @@ type
     constructor Create(const AColor: TColor; ASolid, AGlobal: Boolean); reintroduce;
     procedure SetColor(const AColor: TColor; ASolid: Boolean);
     procedure GetRGBA(AROP2: Integer; out AR, AG, AB, AA: CGFloat);
-    function CreateNSColor: NSColor;
+    function ObtainNSColor: NSColor;
 
     property Red: Byte read FR write FR;
     property Green: Byte read FG write FG;
@@ -167,7 +169,7 @@ type
     FJoinStyle: CGLineJoin;
    public
     Dashes: TCocoaDashes;
-    constructor CreateDefault;
+    constructor CreateDefault(const AGlobal: Boolean = False);
     constructor Create(const ALogPen: TLogPen; const AGlobal: Boolean = False);
     constructor Create(dwPenStyle, dwWidth: DWord; const lplb: TLogBrush; dwStyleCount: DWord; lpStyle: PDWord);
     constructor Create(const ABrush: TCocoaBrush; const AGlobal: Boolean = False);
@@ -196,6 +198,7 @@ type
     FSize: Integer;
     FStyle: TCocoaFontStyle;
     FAntialiased: Boolean;
+    FIsSystemFont: Boolean;
   public
     constructor CreateDefault(AGlobal: Boolean = False);
     constructor Create(const ALogFont: TLogFont; AFontName: String; AGlobal: Boolean = False); reintroduce; overload;
@@ -217,6 +220,7 @@ type
     FOriginalData: PByte; // Exists and is set in case the data needed pre-multiplication
     FAlignment: TCocoaBitmapAlignment;
     FFreeData: Boolean;
+    FModified_SinceLastRecreate: Boolean;
     FDataSize: Integer;
     FBytesPerRow: Integer;
     FDepth: Byte;
@@ -244,6 +248,8 @@ type
     procedure CreateHandle();
     procedure FreeHandle();
     procedure ReCreateHandle();
+    procedure ReCreateHandle_IfModified();
+    procedure SetModified();
     function CreateSubImage(const ARect: TRect): CGImageRef;
     function CreateMaskImage(const ARect: TRect): CGImageRef;
     procedure PreMultiplyAlpha();
@@ -303,6 +309,8 @@ type
 
     isClipped: Boolean;
     ClipShape: HIShapeRef;
+
+    destructor Destroy; override;
   end;
 
   TGlyphArray = array of NSGlyph;
@@ -386,6 +394,7 @@ type
     procedure RestoreCGFillping(Ctx: CGContextRef; Width, Height: CGFloat);
     procedure ApplyTransform(Trans: CGAffineTransform);
     procedure ClearClipping;
+    procedure AttachedBitmap_SetModified(); virtual;
   public
     ctx: NSGraphicsContext;
     isControlDC: Boolean; // control DCs should never be freed by ReleaseDC as the control will free it by itself
@@ -456,6 +465,8 @@ type
   private
     FBitmap : TCocoaBitmap;
     procedure SetBitmap(const AValue: TCocoaBitmap);
+  protected
+    procedure AttachedBitmap_SetModified(); override;
   public
     constructor Create; reintroduce;
     destructor Destroy; override;
@@ -485,17 +496,26 @@ uses
 
 function CheckDC(dc: HDC): TCocoaContext;
 begin
-  Result := TCocoaContext(dc);
+  //Result := TCocoaContext(dc);
+  if TObject(dc) is TCocoaContext then
+    Result := TCocoaContext(dc)
+  else
+    Result := nil;
 end;
 
 function CheckDC(dc: HDC; Str: string): Boolean;
 begin
-  Result := dc<>0;
+  //Result := dc<>0;
+  Result := (dc <> 0) and (TObject(dc) is TCocoaContext);
 end;
 
 function CheckGDIOBJ(obj: HGDIOBJ): TCocoaGDIObject;
 begin
-  Result := TCocoaGDIObject(obj);
+  //Result := TObject(obj) as TCocoaGDIObject;
+  if TObject(obj) is TCocoaGDIObject then
+    Result := TCocoaGDIObject(obj)
+  else
+    Result := nil;
 end;
 
 function CheckBitmap(ABitmap: HBITMAP; AStr: string): Boolean;
@@ -520,7 +540,8 @@ constructor TCocoaFont.CreateDefault(AGlobal: Boolean = False);
 var Pool: NSAutoreleasePool;
 begin
   Pool := NSAutoreleasePool.alloc.init;
-  Create(NSFont.systemFontOfSize(0));
+  FIsSystemFont := True;
+  Create(NSFont.systemFontOfSize(0), AGlobal);
   Pool.release;
 end;
 
@@ -532,14 +553,23 @@ var
   Pool: NSAutoreleasePool;
   Win32Weight, LoopCount: Integer;
   CocoaWeight: NSInteger;
+  FTmpFont: NSFont;
 begin
   inherited Create(AGlobal);
 
   Pool := NSAutoreleasePool.alloc.init;
 
   FName := AFontName;
-  if FName = 'default' then
-    FName := NSStringToString(NSFont.systemFontOfSize(0).familyName);
+
+  // If we are using a "systemFont" font we need this complex shuffling,
+  // because otherwise the result is wrong in Mac OS X 10.11, see bug 30300
+  // Code used for 10.10 or inferior:
+  // FName := NSStringToString(NSFont.systemFontOfSize(0).familyName);
+  if AnsiCompareText(FName, 'default') = 0 then
+  begin
+    FTmpFont := NSFont.fontWithName_size(NSFont.systemFontOfSize(0).fontDescriptor.postscriptName, 0);
+    FName := NSStringToString(FTmpFont.familyName);
+  end;
 
   if ALogFont.lfHeight = 0 then
     FSize := Round(NSFont.systemFontSize)
@@ -558,15 +588,35 @@ begin
   if ALogFont.lfStrikeOut > 0 then
     include(FStyle, cfs_StrikeOut);
 
+  // If this is not a "systemFont" Create the font ourselves
   FontName := NSStringUTF8(FName);
   Attributes := NSDictionary.dictionaryWithObjectsAndKeys(
         FontName, NSFontFamilyAttribute,
         NSNumber.numberWithFloat(FSize), NSFontSizeAttribute,
         nil);
   FontName.release;
-
   Descriptor := NSFontDescriptor.fontDescriptorWithFontAttributes(Attributes);
   FFont := NSFont.fontWithDescriptor_textTransform(Descriptor, nil);
+
+  if FFont = nil then
+  begin
+    // fallback to system font if not found (at least we can try to apply some of the other traits)
+    FName := NSStringToString(NSFont.systemFontOfSize(0).familyName);
+    FontName := NSStringUTF8(FName);
+    Attributes := NSDictionary.dictionaryWithObjectsAndKeys(
+               FontName, NSFontFamilyAttribute,
+               NSNumber.numberWithFloat(FSize), NSFontSizeAttribute,
+               nil);
+    FontName.release;
+    Descriptor := NSFontDescriptor.fontDescriptorWithFontAttributes(Attributes);
+    FFont := NSFont.fontWithDescriptor_textTransform(Descriptor, nil);
+    if FFont = nil then
+    begin
+      Pool.release;
+      exit;
+    end;
+  end;
+
   // we could use NSFontTraitsAttribute to request the desired font style (Bold/Italic)
   // but in this case we may get NIL as result. This way is safer.
   if cfs_Italic in Style then
@@ -581,8 +631,8 @@ begin
   end;
   if Win32Weight <> FW_DONTCARE then
   begin
-    // currently if we request the desired waight by Attributes we may get a nil font
-    // so we need to get font weight and to convert it to lighter/havier
+    // currently if we request the desired weight by Attributes we may get a nil font
+    // so we need to get font weight and to convert it to lighter/heavier
     LoopCount := 0;
     repeat
       // protection from endless loop
@@ -602,7 +652,7 @@ begin
   Pool.release;
 end;
 
-constructor TCocoaFont.Create(const AFont: NSFont; AGlobal: Boolean);
+constructor TCocoaFont.Create(const AFont: NSFont; AGlobal: Boolean = False);
 var  Pool: NSAutoreleasePool;
 begin
   inherited Create(AGlobal);
@@ -714,7 +764,7 @@ begin
   end;
 end;
 
-function TCocoaColorObject.CreateNSColor: NSColor;
+function TCocoaColorObject.ObtainNSColor: NSColor;
 begin
   Result := NSColor.colorWithCalibratedRed_green_blue_alpha(FR / 255, FG / 255, FB / 255, Byte(FA));
 end;
@@ -860,6 +910,7 @@ begin
   //  ' FData=', DebugShowData());
 
   // Create the associated NSImageRep
+  Assert(FImagerep = nil);
   FImagerep := NSBitmapImageRep(NSBitmapImageRep.alloc.initWithBitmapDataPlanes_pixelsWide_pixelsHigh__colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
     @FData, // planes, BitmapDataPlanes
     FWidth, // width, pixelsWide
@@ -875,6 +926,7 @@ begin
     ));
 
   // Create the associated NSImage
+  Assert(FImage = nil);
   FImage := NSImage.alloc.initWithSize(NSMakeSize(FWidth, FHeight));
   //pool := NSAutoreleasePool.alloc.init;
   Image.addRepresentation(Imagerep);
@@ -898,7 +950,21 @@ end;
 procedure TCocoaBitmap.ReCreateHandle;
 begin
   FreeHandle();
+  if (FOriginalData <> nil) and (FData <> nil) then // fix bug 28692
+    System.Move(FOriginalData^, FData^, FDataSize);
   CreateHandle();
+end;
+
+procedure TCocoaBitmap.ReCreateHandle_IfModified;
+begin
+  if FModified_SinceLastRecreate then
+    ReCreateHandle();
+  FModified_SinceLastRecreate := False;
+end;
+
+procedure TCocoaBitmap.SetModified;
+begin
+  FModified_SinceLastRecreate := True;
 end;
 
 function TCocoaBitmap.CreateSubImage(const ARect: TRect): CGImageRef;
@@ -954,7 +1020,7 @@ begin
   // Pre-Multiply
   lByteData := PByte(FData);
   i := 0;
-  while i < FDataSize -1 do
+  while i < FDataSize - 3 do
   begin
     if FType = cbtARGB then
     begin
@@ -1023,14 +1089,14 @@ end;
 
 constructor TCocoaCursor.CreateFromBitmap(const ABitmap: TCocoaBitmap; const hotSpot: NSPoint);
 begin
-  FBitmap := ABitmap;
+  FBitmap := ABitmap;            // takes ownership, no ref count change required
   FCursor := NSCursor.alloc.initWithImage_hotSpot(ABitmap.Image, hotSpot);
   FStandard := False;
 end;
 
 destructor TCocoaCursor.Destroy;
 begin
-  FreeAndNil(FBitmap); // FBitmap does not use reference counting mechanism...
+  FreeAndNil(FBitmap);
   if not Standard then
     FCursor.release;
   inherited;
@@ -1065,6 +1131,7 @@ begin
   if Assigned(FFont) then
   begin
     Range := GetTextRange;
+    if (Range.length <= 0) or (FFont.Font = nil) then Exit;
     // apply font itself
     FTextStorage.addAttribute_value_range(NSFontAttributeName, FFont.Font, Range);
     // aply font attributes which are not in NSFont
@@ -1077,8 +1144,6 @@ begin
       FTextStorage.addAttribute_value_range(NSStrikethroughStyleAttributeName, NSNumber.numberWithInteger(UnderlineStyle), Range)
     else
       FTextStorage.removeAttribute_range(NSStrikethroughStyleAttributeName, Range);
-
-
   end;
 end;
 
@@ -1143,17 +1208,16 @@ begin
   FLayout.release;
   FTextContainer.release;
   FTextStorage.release;
-  FFont.Release;
+  if Assigned(FFont) then
+    FFont.Release;
   inherited Destroy;
 end;
 
 procedure TCocoaTextLayout.SetFont(AFont: TCocoaFont);
 begin
-  if FFont <> AFont then
+  if TCocoaGDIObject.UpdateRefs(FFont, AFont) then
   begin
-    FFont.Release;
-    FFont := AFont;
-    FFont.AddRef;
+    FFont := AFont as TCocoaFont;
     FTextStorage.beginEditing;
     updateFont;
     FTextStorage.endEditing;
@@ -1329,7 +1393,7 @@ end;
 
 procedure TCocoaContext.SetBrush(const AValue: TCocoaBrush);
 begin
-  if FBrush <> AValue then
+  if TCocoaGDIObject.UpdateRefs(FBrush, AValue) then
   begin
     FBrush := AValue;
     if Assigned(FBrush) then FBrush.Apply(Self);
@@ -1338,12 +1402,12 @@ end;
 
 procedure TCocoaContext.SetFont(const AValue: TCocoaFont);
 begin
-  FText.Font := AValue;
+  FText.Font := AValue;        // UpdateRefs done within property setter
 end;
 
 procedure TCocoaContext.SetPen(const AValue: TCocoaPen);
 begin
-  if FPen <> AValue then
+  if TCocoaGDIObject.UpdateRefs(FPen, AValue) then
   begin
     FPen := AValue;
     if Assigned(FPen) then FPen.Apply(Self);
@@ -1352,7 +1416,7 @@ end;
 
 procedure TCocoaContext.SetRegion(const AValue: TCocoaRegion);
 begin
-  if FRegion <> AValue then
+  if TCocoaGDIObject.UpdateRefs(FRegion, AValue) then
   begin
     FRegion := AValue;
     if Assigned(FRegion) then FRegion.Apply(Self);
@@ -1407,6 +1471,12 @@ begin
   Result.CurrentPen := FPen;
   Result.CurrentRegion := FRegion;
 
+  // Add references for retained state
+  if Assigned(Result.CurrentFont) then Result.CurrentFont.AddRef;
+  if Assigned(Result.CurrentBrush) then Result.CurrentBrush.AddRef;
+  if Assigned(Result.CurrentPen) then Result.CurrentPen.AddRef;
+  if Assigned(Result.CurrentRegion) then Result.CurrentRegion.AddRef;
+
   Result.BkColor := FBkColor;
   Result.BkMode := FBkMode;
   Result.BkBrush := FBkBrush;
@@ -1423,43 +1493,21 @@ begin
   Result.ClipShape := FClipRegion.GetShapeCopy;
 end;
 
+destructor TCocoaDCData.Destroy;
+begin
+  // Remove references for retained state
+  if Assigned(CurrentFont) then CurrentFont.Release;
+  if Assigned(CurrentBrush) then CurrentBrush.Release;
+  if Assigned(CurrentPen) then CurrentPen.Release;
+  if Assigned(CurrentRegion) then CurrentRegion.Release;
+end;
+
 procedure TCocoaContext.RestoreDCData(const AData: TCocoaDCData);
 begin
-  if (Font <> AData.CurrentFont) then
-  begin
-    if Assigned(Font) then
-      Font.Release;
-    if Assigned(AData.CurrentFont) then
-      AData.CurrentFont.AddRef;
-  end;
   Font := AData.CurrentFont;
-
-  if (FBrush <> AData.CurrentBrush) then
-  begin
-    if Assigned(FBrush) then
-      FBrush.Release;
-    if Assigned(AData.CurrentBrush) then
-      AData.CurrentBrush.AddRef;
-  end;
-  FBrush := AData.CurrentBrush;
-
-  if (FPen <> AData.CurrentPen) then
-  begin
-    if Assigned(FPen) then
-      FPen.Release;
-    if Assigned(AData.CurrentPen) then
-      AData.CurrentPen.AddRef;
-  end;
-  FPen := AData.CurrentPen;
-
-  if (FRegion <> AData.CurrentRegion) then
-  begin
-    if Assigned(FRegion) then
-      FRegion.Release;
-    if Assigned(AData.CurrentRegion) then
-      AData.CurrentRegion.AddRef;
-  end;
-  FRegion := AData.CurrentRegion;
+  Brush := AData.CurrentBrush;
+  Pen := AData.CurrentPen;
+  Region := AData.CurrentRegion;
 
   FBkColor := AData.BkColor;
   FBkMode := AData.BkMode;
@@ -1482,6 +1530,8 @@ begin
   inherited Create;
 
   ctx := AGraphicsContext;
+  if Assigned(ctx) then
+    ctx.retain;
 
   FBkBrush := TCocoaBrush.CreateDefault;
 
@@ -1490,8 +1540,9 @@ begin
   FPen := DefaultPen;
   FPen.AddRef;
   FRegion := TCocoaRegion.CreateDefault;
-  FRegion.AddRef;
   FClipRegion := FRegion;
+  FClipRegion.AddRef;
+
   FSavedDCList := nil;
   FText := TCocoaTextLayout.Create;
   FClipped := False;
@@ -1499,17 +1550,23 @@ end;
 
 destructor TCocoaContext.Destroy;
 begin
-  FBkBrush.Free;
-
   if Assigned(FBrush) then
     FBrush.Release;
   if Assigned(FPen) then
     FPen.Release;
+
   if Assigned(FRegion) then
     FRegion.Release;
-  FClipRegion.Free;
+  FClipRegion.Release;
+
   FSavedDCList.Free;
   FText.Free;
+
+  FBkBrush.Free;
+
+  if Assigned(ctx) then
+    ctx.release;
+
   inherited Destroy;
 end;
 
@@ -1543,6 +1600,7 @@ begin
   while FSavedDCList.Count > ASavedDC do
   begin
     ctx.restoreGraphicsState;
+    RestoreDCData(TCocoaDCData(FSavedDCList.Count - 1));
     FSavedDCList.Delete(FSavedDCList.Count - 1);
   end;
 
@@ -1588,6 +1646,7 @@ begin
     CGContextFillRect(CGContext, GetCGRectSorted(X1, Y1, X2, Y2));
   finally
     ctx.restoreGraphicsState;
+    AttachedBitmap_SetModified();
   end;
 end;
 
@@ -1650,6 +1709,8 @@ begin
 
   FPenPos.x := X;
   FPenPos.y := Y;
+
+  AttachedBitmap_SetModified();
 end;
 
 function TCocoaContext.GetPixel(X,Y:integer): TColor;
@@ -1681,6 +1742,8 @@ begin
     //restore the brush
   if Assigned(FBrush) then
      FBrush.Apply(Self);
+
+  AttachedBitmap_SetModified();
 end;
 
 procedure CGContextAddLCLPoints(cg: CGContextRef; const Points: array of TPoint;NumPts:Integer);
@@ -1738,6 +1801,8 @@ begin
     CGContextDrawPath(cg, kCGPathFillStroke)
   else
     CGContextDrawPath(cg, kCGPathEOFillStroke);
+
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.Polyline(const Points: array of TPoint; NumPts: Integer);
@@ -1750,6 +1815,8 @@ begin
   CGContextBeginPath(cg);
   CGContextAddLCLPoints(cg, Points, NumPts);
   CGContextStrokePath(cg);
+
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.Rectangle(X1, Y1, X2, Y2: Integer; FillRect: Boolean; UseBrush: TCocoaBrush);
@@ -1776,6 +1843,8 @@ begin
     CGContextAddLCLRect(cg, X1, Y1, X2, Y2, true);
 
   CGContextStrokePath(cg);
+
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.BackgroundFill(dirtyRect:NSRect);
@@ -1790,6 +1859,7 @@ begin
 
   CGContextFillRect(cg,CGRect(dirtyRect));
 
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.Ellipse(X1, Y1, X2, Y2:Integer);
@@ -1806,6 +1876,8 @@ begin
   CGContextBeginPath(CGContext);
   CGContextAddEllipseInRect(CGContext, R);
   CGContextDrawPath(CGContext, kCGPathFillStroke);
+
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.TextOut(X, Y: Integer; Options: Longint; Rect: PRect; UTF8Chars: PChar; Count: Integer; CharsDelta: PInteger);
@@ -1845,11 +1917,14 @@ begin
   end;
 
   CGContextRestoreGState(CGContext());
+
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.Frame(const R: TRect);
 begin
   Rectangle(R.Left, R.Top, R.Right + 1, R.Bottom + 1, False, nil);
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.Frame3d(var ARect: TRect; const FrameWidth: integer; const Style: TBevelCut);
@@ -1890,11 +1965,13 @@ begin
     lCanvas.Free;
   end;
   {$endif}
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.FrameRect(const ARect: TRect; const ABrush: TCocoaBrush);
 begin
- Rectangle(Arect.Left,ARect.Top,Arect.Right,ARect.Bottom, False, ABrush);
+  Rectangle(Arect.Left,ARect.Top,Arect.Right,ARect.Bottom, False, ABrush);
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.SetCGFillping(Ctx: CGContextRef; Width, Height: CGFloat);
@@ -1952,6 +2029,11 @@ begin
   end;
 end;
 
+procedure TCocoaContext.AttachedBitmap_SetModified;
+begin
+
+end;
+
 function TCocoaContext.DrawImageRep(dstRect: NSRect; const srcRect: NSRect;
   ImageRep: NSBitmapImageRep): Boolean;
 var
@@ -1973,6 +2055,7 @@ begin
   finally
     ctx.restoreGraphicsState;
   end;
+  AttachedBitmap_SetModified();
 end;
 
 function TCocoaContext.StretchDraw(X, Y, Width, Height: Integer;
@@ -2002,15 +2085,16 @@ begin
 
     CGImageRelease(MskImage);
     CGContextRestoreGState(CGContext);
-    Bmp.ReCreateHandle(); // Fix for bug 28102
+    Bmp.ReCreateHandle_IfModified(); // Fix for bug 28102
   end
   else
   begin
     // convert Y coordinate of the source bitmap
     YSrc := Bmp.Height - (SrcHeight + YSrc);
     Result := DrawImageRep(GetNSRect(X, Y, Width, Height),GetNSRect(XSrc, YSrc, SrcWidth, SrcHeight), bmp.ImageRep);
-    Bmp.ReCreateHandle(); // Fix for bug 28102
+    Bmp.ReCreateHandle_IfModified(); // Fix for bug 28102
   end;
+  AttachedBitmap_SetModified();
 end;
 
 {------------------------------------------------------------------------------
@@ -2042,23 +2126,29 @@ var
   Adjustments: array of NSSize;
   I: Integer;
   A: Single;
+  lNSFont: NSFont;
 begin
+  result := False;
+  if not Assigned(Font) then
+    exit;
+
   FillChar(TM, SizeOf(TM), 0);
 
-  TM.tmAscent := Round(Font.Font.ascender);
-  TM.tmDescent := -Round(Font.Font.descender);
+  lNSFont := Font.Font;
+  TM.tmAscent := Round(lNSFont.ascender);
+  TM.tmDescent := -Round(lNSFont.descender);
   TM.tmHeight := TM.tmAscent + TM.tmDescent;
 
-  TM.tmInternalLeading := Round(Font.Font.leading);
+  TM.tmInternalLeading := Round(lNSFont.leading);
   TM.tmExternalLeading := 0;
 
-  TM.tmMaxCharWidth := Round(Font.Font.maximumAdvancement.width);
+  TM.tmMaxCharWidth := Round(lNSFont.maximumAdvancement.width);
   FText.SetText('WMTigq[_|^', 10);
   Glyphs := FText.GetGlyphs;
   if Length(Glyphs) > 0 then
   begin
     SetLength(Adjustments, Length(Glyphs));
-    Font.Font.getAdvancements_forGlyphs_count(@Adjustments[0], @Glyphs[0], Length(Glyphs));
+    lNSFont.getAdvancements_forGlyphs_count(@Adjustments[0], @Glyphs[0], Length(Glyphs));
     A := 0;
     for I := 0 to High(Adjustments) do
       A := A + Adjustments[I].width;
@@ -2104,6 +2194,7 @@ begin
   NSGraphicsContext.setCurrentContext(ctx);
   ABitmap.imagerep.drawAtPoint(NSMakePoint(X, Y));
   NSGraphicsContext.restoreGraphicsState();
+  AttachedBitmap_SetModified();
 end;
 
 procedure TCocoaContext.DrawFocusRect(ARect: TRect);
@@ -2132,6 +2223,7 @@ begin
     lCanvas.Free;
   end;
   {$endif}
+  AttachedBitmap_SetModified();
 end;
 
 { TCocoaBitmapContext }
@@ -2157,6 +2249,12 @@ begin
   end;
 end;
 
+procedure TCocoaBitmapContext.AttachedBitmap_SetModified;
+begin
+  if FBitmap = nil then Exit;
+  FBitmap.SetModified();
+end;
+
 constructor TCocoaBitmapContext.Create;
 begin
   inherited Create(nil);
@@ -2165,8 +2263,6 @@ end;
 
 destructor TCocoaBitmapContext.Destroy;
 begin
-  if Assigned(ctx) then
-    ctx.release;
   inherited Destroy;
 end;
 
@@ -2194,9 +2290,9 @@ end;
 
   Creates a new empty Cocoa region
  ------------------------------------------------------------------------------}
-constructor TCocoaRegion.CreateDefault;
+constructor TCocoaRegion.CreateDefault(AGlobal: Boolean = False);
 begin
-  inherited Create(False);
+  inherited Create(AGlobal);
 
   FShape := HIShapeCreateEmpty;
 end;
@@ -2571,9 +2667,9 @@ begin
   end;
 end;
 
-constructor TCocoaPen.CreateDefault;
+constructor TCocoaPen.CreateDefault(const AGlobal: Boolean = False);
 begin
-  inherited Create(clBlack, True, False);
+  inherited Create(clBlack, True, AGlobal);
   FStyle := PS_SOLID;
   FWidth := 1;
   FIsExtPen := False;
@@ -2738,14 +2834,14 @@ begin
   begin
     FillChar(ACallBacks, SizeOf(ACallBacks), 0);
     ACallBacks.drawPattern := @DrawBitmapPattern;
-    if (FBitmap <> nil) and (not FBitmap.Global) then FBitmap.Free;
+    if (FBitmap <> nil) then FBitmap.Release;
     FBitmap := TCocoaBitmap.Create(8, 8, 1, 1, cbaByte, cbtMask, @HATCH_DATA[AHatch]);
     if FImage <> nil then CGImageRelease(FImage);
     FImage := CGImageCreateCopy(MacOSAll.CGImageRef( FBitmap.ImageRep.CGImageForProposedRect_context_hints(nil, nil, nil)));
     FColored := False;
     if FCGPattern <> nil then CGPatternRelease(FCGPattern);
     FCGPattern := CGPatternCreate(Self, GetCGRect(0, 0, 8, 8),
-      CGAffineTransformIdentity, 8, 8, kCGPatternTilingConstantSpacing,
+      CGAffineTransformIdentity, 8.0, 8.0, kCGPatternTilingConstantSpacing,
       Ord(FColored), ACallBacks);
   end;
 end;
@@ -2759,14 +2855,14 @@ begin
   AHeight := ABitmap.Height;
   FillChar(ACallBacks, SizeOf(ACallBacks), 0);
   ACallBacks.drawPattern := @DrawBitmapPattern;
-  if (FBitmap <> nil) and (not FBitmap.Global) then FBitmap.Free;
+  if (FBitmap <> nil) then FBitmap.Release;
   FBitmap := TCocoaBitmap.Create(ABitmap);
   if FImage <> nil then CGImageRelease(FImage);
   FImage := CGImageCreateCopy(MacOSAll.CGImageRef( FBitmap.imageRep.CGImageForProposedRect_context_hints(nil, nil, nil)));
   FColored := True;
   if FCGPattern <> nil then CGPatternRelease(FCGPattern);
   FCGPattern := CGPatternCreate(Self, GetCGRect(0, 0, AWidth, AHeight),
-    CGAffineTransformIdentity, AWidth, AHeight, kCGPatternTilingConstantSpacing,
+    CGAffineTransformIdentity, CGFloat(AWidth), CGFloat(AHeight), kCGPatternTilingConstantSpacing,
     Ord(FColored), ACallBacks);
 end;
 
@@ -2908,7 +3004,11 @@ begin
     FCGPattern := nil;
   end;
 
-  FreeAndNil(FBitmap); // FBitmap does not use refcounts...
+  if FBitmap <> nil then
+  begin
+    FBitmap.Release;
+    FBitmap := nil;
+  end;
 
   if FImage <> nil then
   begin
@@ -2970,25 +3070,48 @@ end;
 
 constructor TCocoaGDIObject.Create(AGlobal: Boolean);
 begin
-  FRefCount := 0;
+  FRefCount := 1;
   FGlobal := AGlobal;
+end;
+
+destructor TCocoaGDIObject.Destroy;
+begin
+  if not FGlobal then
+  begin
+    Dec(FRefCount);
+    if FRefCount <> 0 then
+    begin
+      //DebugLn('TCocoaGDIObject.Destroy Error - ', dbgsName(self), ' RefCount = ', dbgs(FRefCount));
+      FRefCount := FRefCount;
+    end;
+  end;
+end;
+
+class function TCocoaGDIObject.UpdateRefs(ATarget: TCocoaGDIObject; ASource: TCocoaGDIObject): Boolean; static;
+begin
+  result := ASource <> ATarget;
+  if result then
+  begin
+    if Assigned(ASource) then
+      ASource.AddRef;
+    if Assigned(ATarget) then
+      ATarget.Release;
+  end;
 end;
 
 procedure TCocoaGDIObject.AddRef;
 begin
   if FGlobal then Exit;
-  if FRefCount >= 0 then inc(FRefCount);
+  inc(FRefCount);
 end;
 
 procedure TCocoaGDIObject.Release;
 begin
   if FGlobal then Exit;
-  if FRefCount > 0 then
-    Dec(FRefCount)
+  if FRefCount <= 1 then
+    self.Free                     // the last reference, so free it using the destructor
   else
-  begin
-    //DebugLn('TCocoaGDIObject.Release Error - ', dbgsName(self), ' RefCount = ', dbgs(FRefCount));
-  end;
+    Dec(FRefCount);
 end;
 
 initialization

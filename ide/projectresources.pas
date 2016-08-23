@@ -37,14 +37,22 @@ unit ProjectResources;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, Controls, LCLProc, LResources, LazFileUtils,
-  Dialogs, AvgLvlTree, Laz2_XMLCfg, resource, reswriter,
+  // RTL + LCL
+  Classes, SysUtils, resource, reswriter, fgl,
+  Controls, LCLProc, LResources, Dialogs,
+  // LazUtils
+  LazFileUtils, AvgLvlTree, Laz2_XMLCfg,
+  // Codetools
   KeywordFuncLists, BasicCodeTools, CodeToolManager, CodeCache,
+  // IdeIntf
   ProjectIntf, ProjectResourcesIntf, CompOptsIntf,
+  // IDE
   LazarusIDEStrConsts, IDEProcs, DialogProcs,
   W32Manifest, W32VersionInfo, ProjectIcon, ProjectUserResources;
 
 type
+  TResourceList = specialize TFPGObjectList<TAbstractProjectResource>;
+
   { TProjectResources }
 
   TProjectResources = class(TAbstractProjectResources)
@@ -54,7 +62,7 @@ type
     FInModified: Boolean;
     FLrsIncludeAllowed: Boolean;
 
-    FResources: TObjectList;
+    FResources: TResourceList;
     FSystemResources: TResources;
     FLazarusResources: TStringList;
 
@@ -92,15 +100,15 @@ type
     procedure Clear;
     function Regenerate(const MainFileName: String;
                         UpdateSource, PerformSave: boolean;
-                        SaveToTestDir: string): Boolean;
+                        const SaveToTestDir: string): Boolean;
     function RenameDirectives(const CurFileName, NewFileName: String): Boolean;
     procedure DeleteResourceBuffers;
 
     function HasSystemResources: Boolean;
     function HasLazarusResources: Boolean;
 
-    procedure WriteToProjectFile(AConfig: TXMLConfig; Path: String);
-    procedure ReadFromProjectFile(AConfig: TXMLConfig; Path: String);
+    procedure WriteToProjectFile(AConfig: TXMLConfig; const Path: String);
+    procedure ReadFromProjectFile(AConfig: TXMLConfig; const Path: String; ReadAll: Boolean);
 
     property Modified: Boolean read FModified write SetModified;
     property OnModified: TNotifyEvent read FOnModified write FOnModified;
@@ -377,7 +385,7 @@ begin
     if not FModified then
     begin
       for i := 0 to FResources.Count - 1 do
-        TAbstractProjectResource(FResources[i]).Modified := False;
+        FResources[i].Modified := False;
     end;
     if Assigned(FOnModified) then
       OnModified(Self);
@@ -388,16 +396,14 @@ end;
 function TProjectResources.Update: Boolean;
 var
   i: integer;
-  Res: TAbstractProjectResource;
 begin
   Result:=true;
   Clear;
   for i := 0 to FResources.Count - 1 do
   begin
-    Res:=TAbstractProjectResource(FResources[i]);
-    Result := Res.UpdateResources(Self, resFileName);
+    Result := FResources[i].UpdateResources(Self, resFileName);
     if not Result then begin
-      debugln(['TProjectResources.Update UpdateResources of ',DbgSName(Res),' failed']);
+      debugln(['TProjectResources.Update UpdateResources of ',DbgSName(FResources[i]),' failed']);
       Exit;
     end;
   end;
@@ -423,7 +429,7 @@ begin
   FSystemResources := TResources.Create;
   FLazarusResources := TStringList.Create;
 
-  FResources := TObjectList.Create;
+  FResources := TResourceList.Create;
   L := GetRegisteredResources;
   for i := 0 to L.Count - 1 do
   begin
@@ -470,7 +476,7 @@ var
 begin
   for i := 0 to FResources.Count - 1 do
   begin
-    Result := TAbstractProjectResource(FResources[i]);
+    Result := FResources[i];
     if Result.InheritsFrom(AIndex) then
       Exit;
   end;
@@ -482,7 +488,7 @@ var
   i: integer;
 begin
   for i := 0 to FResources.Count - 1 do
-    TAbstractProjectResource(FResources[i]).DoAfterBuild(Self, AReason, SaveToTestDir);
+    FResources[i].DoAfterBuild(Self, AReason, SaveToTestDir);
 end;
 
 procedure TProjectResources.DoBeforeBuild(AReason: TCompileReason; SaveToTestDir: boolean);
@@ -490,7 +496,7 @@ var
   i: integer;
 begin
   for i := 0 to FResources.Count - 1 do
-    TAbstractProjectResource(FResources[i]).DoBeforeBuild(Self, AReason, SaveToTestDir);
+    FResources[i].DoBeforeBuild(Self, AReason, SaveToTestDir);
 end;
 
 procedure TProjectResources.Clear;
@@ -500,8 +506,8 @@ begin
   FMessages.Clear;
 end;
 
-function TProjectResources.Regenerate(const MainFileName: String;
-  UpdateSource, PerformSave: boolean; SaveToTestDir: string): Boolean;
+function TProjectResources.Regenerate(const MainFileName: String; UpdateSource,
+  PerformSave: boolean; const SaveToTestDir: string): Boolean;
 begin
   //DebugLn(['TProjectResources.Regenerate MainFilename=',MainFilename,' UpdateSource=',UpdateSource,' PerformSave=',PerformSave]);
   //DumpStack;
@@ -552,22 +558,25 @@ begin
   Result := FLazarusResources.Count > 0;
 end;
 
-procedure TProjectResources.WriteToProjectFile(AConfig: TXMLConfig; Path: String);
+procedure TProjectResources.WriteToProjectFile(AConfig: TXMLConfig;
+  const Path: String);
 var
   i: integer;
 begin
   AConfig.SetDeleteValue(Path+'General/ResourceType/Value', ResourceTypeNames[ResourceType], ResourceTypeNames[rtLRS]);
   for i := 0 to FResources.Count - 1 do
-    TAbstractProjectResource(FResources[i]).WriteToProjectFile(AConfig, Path);
+    FResources[i].WriteToProjectFile(AConfig, Path);
 end;
 
-procedure TProjectResources.ReadFromProjectFile(AConfig: TXMLConfig; Path: String);
+procedure TProjectResources.ReadFromProjectFile(AConfig: TXMLConfig;
+  const Path: String; ReadAll: Boolean);
 var
   i: integer;
 begin
   ResourceType := StrToResourceType(AConfig.GetValue(Path+'General/ResourceType/Value', ResourceTypeNames[rtLRS]));
   for i := 0 to FResources.Count - 1 do
-    TAbstractProjectResource(FResources[i]).ReadFromProjectFile(AConfig, Path);
+    if ReadAll or FResources[i].IsDefaultOption then
+      FResources[i].ReadFromProjectFile(AConfig, Path);
 end;
 
 function TProjectResources.UpdateMainSourceFile(const AFileName: string): Boolean;

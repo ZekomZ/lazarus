@@ -475,6 +475,14 @@ msgstr "Kurti numatytą įvykį"
 msgid "Create new field and add it at current position"
 msgstr "Sukurti naują laukelį ir jį įdėti į dabartinę poziciją"
 
+#: objinspstrconsts.oiscurrentparent
+msgid "Current parent"
+msgstr ""
+
+#: objinspstrconsts.oiscurrentparents
+msgid "Current parents"
+msgstr ""
+
 #: objinspstrconsts.oiscutcomponents
 msgctxt "objinspstrconsts.oiscutcomponents"
 msgid "Cu&t"
@@ -758,6 +766,14 @@ msgstr "Žymėti &viską"
 msgid "Select All Fields"
 msgstr "Pažymėti visus laukelius"
 
+#: objinspstrconsts.oisselectedcontrol
+msgid "Selected control"
+msgstr ""
+
+#: objinspstrconsts.oisselectedcontrols
+msgid "Selected controls"
+msgstr ""
+
 #: objinspstrconsts.oisselectedproperties
 msgid "&Selected Properties"
 msgstr ""
@@ -792,6 +808,10 @@ msgstr "Keisti į numatytą: %s"
 
 #: objinspstrconsts.oissettodefaulthint
 msgid "Set property value to Default"
+msgstr ""
+
+#: objinspstrconsts.oisshowclasses
+msgid "Show classes"
 msgstr ""
 
 #: objinspstrconsts.oisshowcomponenttree
@@ -1319,9 +1339,17 @@ msgstr "Jiokios"
 msgid "Add Images"
 msgstr "Pridėti paveikslų"
 
+#: objinspstrconsts.sccsiledtopendialogn
+msgid "New Image"
+msgstr ""
+
 #: objinspstrconsts.sccsiledtransparentcolor
 msgid "Transparent Color:"
 msgstr "Permatoma spalva:"
+
+#: objinspstrconsts.sccsiledtreplace
+msgid "&Replace ..."
+msgstr ""
 
 #: objinspstrconsts.sccsiledtsave
 msgctxt "objinspstrconsts.sccsiledtsave"
@@ -1542,6 +1570,10 @@ msgstr "Registruoti klavišą"
 #: objinspstrconsts.s_addassingle
 msgid "Add as single"
 msgstr "Pridėti vientisą"
+
+#: objinspstrconsts.s_confirm_clear
+msgid "Are you sure to clear image list?"
+msgstr ""
 
 #: objinspstrconsts.s_splitimage
 msgid "Split image"

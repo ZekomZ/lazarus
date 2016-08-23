@@ -54,8 +54,8 @@ type
     class procedure WSRegisterClass; override;
     procedure CreatePreviewControl; virtual;
     procedure InitPreviewControl; virtual;
+    function DoExecute: boolean; override;
   public
-    function Execute: boolean; override;
     constructor Create(TheOwner: TComponent); override;
     property PreviewFileControl: TPreviewFileControl read FPreviewFileControl;
   end;
@@ -148,6 +148,9 @@ type
     procedure SetDialogScale(AValue: integer);
   protected
     class procedure WSRegisterClass; override;
+    procedure OnDialogClose(Sender: TObject; var CloseAction: TCloseAction);
+    procedure OnDialogShow(Sender: TObject);
+    procedure OnDialogCloseQuery(Sender : TObject; var CanClose : boolean);
     procedure Change; virtual;
     procedure CalcKey(var Key: char); virtual;
     function DefaultTitle: string; override;
@@ -193,6 +196,7 @@ type
     FCalendar: TCalendar;
     procedure OnDialogClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure OnDialogCloseQuery(Sender : TObject; var CanClose : boolean);
+    procedure OnDialogShow(Sender: TObject);
     procedure OnCalendarDayChanged(Sender: TObject);
     procedure OnCalendarMonthChanged(Sender: TObject);
     procedure OnCalendarYearChanged(Sender: TObject);
@@ -266,8 +270,7 @@ constructor TPreviewFileControl.Create(TheOwner: TComponent);
 begin
   inherited Create(TheOwner);
   FCompStyle:=csPreviewFileControl;
-  with GetControlClassDefaultSize do
-    SetInitialBounds(0, 0, CX, CY);
+  SetInitialBounds(0, 0, GetControlClassDefaultSize.CX, GetControlClassDefaultSize.CY);
 end;
 
 { TPreviewFileDialog }
@@ -291,10 +294,10 @@ begin
   FPreviewFileControl.Name:='PreviewFileControl';
 end;
 
-function TPreviewFileDialog.Execute: boolean;
+function TPreviewFileDialog.DoExecute: boolean;
 begin
   CreatePreviewControl;
-  Result:=inherited Execute;
+  Result:=inherited DoExecute;
 end;
 
 constructor TPreviewFileDialog.Create(TheOwner: TComponent);
@@ -541,6 +544,24 @@ begin
   RegisterCalculatorDialog;
 end;
 
+procedure TCalculatorDialog.OnDialogClose(Sender: TObject;
+  var CloseAction: TCloseAction);
+begin
+  DoClose;
+end;
+
+procedure TCalculatorDialog.OnDialogShow(Sender: TObject);
+begin
+  DoShow;
+end;
+
+procedure TCalculatorDialog.OnDialogCloseQuery(Sender: TObject;
+  var CanClose: boolean);
+begin
+  UserChoice := DlgForm.ModalResult;
+  DoCanClose(CanClose);
+end;
+
 function TCalculatorDialog.GetDisplay: Double;
 begin
   if Assigned(DlgForm) then
@@ -593,8 +614,12 @@ begin
 
   DlgForm:=CreateCalculatorForm(Application, FLayout, HelpContext);
   try
+    ResetShowCloseFlags;
     (DlgForm as TCalculatorForm).OnCalcKey:= @Self.CalcKey;
     (DlgForm as TCalculatorForm).OnDisplayChange:= @Self.DisplayChange;
+    (DlgForm as TCalculatorForm).OnShow := @Self.OnDialogShow;
+    (DlgForm as TCalculatorForm).OnClose := @Self.OnDialogClose;
+    (DlgForm as TCalculatorForm).OnCloseQuery :=@Self.OnDialogCloseQuery;
 
     if FDialogScale<>100 then
       DlgForm.ScaleBy(FDialogScale,100);
@@ -668,9 +693,12 @@ procedure TCalendarDialog.CalendarDblClick(Sender: TObject);
 var
   CalendarForm: TForm;
   P: TPoint;
+  htRes: TCalendarPart;
 begin
   P := FCalendar.ScreenToClient(Mouse.CursorPos);
-  if FCalendar.HitTest(P) in [cpNoWhere, cpDate] then
+  //if FCalendar.HitTest(P) in [cpNoWhere, cpDate] then
+  htRes := FCalendar.HitTest(P);
+  if {(htRes = cpNoWhere) or }((htRes = cpDate) and (FCalendar.GetCalendarView = cvMonth)) then
   begin
     GetNewDate(Sender);
     CalendarForm:=TForm(TComponent(Sender).Owner);
@@ -687,13 +715,24 @@ end;
 procedure TCalendarDialog.OnDialogClose(Sender: TObject;
   var CloseAction: TCloseAction);
 begin
-  if Assigned(OnClose) then OnClose(Self);
+  //if Assigned(OnClose) then OnClose(Self);
+  DoClose;
 end;
 
 procedure TCalendarDialog.OnDialogCloseQuery(Sender: TObject;
   var CanClose: boolean);
 begin
-  if Assigned(OnCanClose) then OnCanClose(Sender, CanClose);
+  //if Assigned(OnCanClose) then OnCanClose(Sender, CanClose);
+  if DlgForm.ModalResult = mrOK then
+    UserChoice := mrOk
+  else
+    UserChoice := mrCancel;
+  DoCanClose(CanClose);
+end;
+
+procedure TCalendarDialog.OnDialogShow(Sender: TObject);
+begin
+  DoShow;
 end;
 
 procedure TCalendarDialog.OnCalendarDayChanged(Sender: TObject);
@@ -737,6 +776,7 @@ var
 begin
   DlgForm:=TForm.CreateNew(Application, 0);
   try
+    ResetShowCloseFlags;
     DlgForm.DisableAlign;
     DlgForm.Caption:=Title;
     if (csDesigning in ComponentState) then
@@ -753,7 +793,7 @@ begin
     DlgForm.BorderStyle:=bsDialog;
     DlgForm.AutoScroll:=false;
     DlgForm.AutoSize:=true;
-    DlgForm.OnShow:=Self.OnShow;
+    DlgForm.OnShow := @OnDialogShow;
     DlgForm.OnClose:=@OnDialogClose;
     DlgForm.OnCloseQuery:=@OnDialogCloseQuery;
 
@@ -829,5 +869,6 @@ begin
     DlgForm := nil;
   end;
 end;
+
 
 end.

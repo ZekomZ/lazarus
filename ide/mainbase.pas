@@ -68,7 +68,7 @@ uses
   Debugger, IDEOptionDefs, Splash, Designer,
   SourceEditor, FindInFilesDlg,
   MainBar, MainIntf, SourceSynEditor, PseudoTerminalDlg,
-  DesktopManager;
+  DesktopManager, ImgList;
 
 type
   TResetToolFlag = (
@@ -126,6 +126,7 @@ type
     procedure mnuWindowItemClick(Sender: TObject); virtual;
     procedure mnuCenterWindowItemClick(Sender: TObject); virtual;
     procedure mnuWindowSourceItemClick(Sender: TObject); virtual;
+    procedure mnuBuildModeClicked(Sender: TObject); virtual; abstract;
 
     procedure UpdateWindowMenu;
 
@@ -136,7 +137,7 @@ type
     procedure StartIDE; virtual; abstract;
     destructor Destroy; override;
     procedure CreateOftenUsedForms; virtual; abstract;
-    function GetMainBar: TComponent; override;
+    function GetMainBar: TForm; override;
     procedure SetRecentProjectFilesMenu;
     procedure SetRecentFilesMenu;
     function BeginCodeTool(var ActiveSrcEdit: TSourceEditor;
@@ -211,18 +212,21 @@ type
     procedure mnuSetBuildModeClick(Sender: TObject);
   public
     procedure DoOnAdded; override;
-
-    class procedure UpdateHints;
   end;
 
   { TOpenFileToolButton }
 
   TOpenFileToolButton = class(TIDEToolButton)
   private
+    FIndex: TStringList;
+
     procedure RefreshMenu(Sender: TObject);
     procedure mnuOpenFile(Sender: TObject);
     procedure mnuProjectFile(Sender: TObject);
   public
+    constructor Create(aOwner: TComponent); override;
+    destructor Destroy; override;
+
     procedure DoOnAdded; override;
   end;
 
@@ -412,12 +416,29 @@ end;
 
 { TOpenFileToolButton }
 
+constructor TOpenFileToolButton.Create(aOwner: TComponent);
+begin
+  inherited Create(aOwner);
+
+  FIndex := TStringList.Create;
+end;
+
+destructor TOpenFileToolButton.Destroy;
+begin
+  FIndex.Free;
+
+  inherited Destroy;
+end;
+
 procedure TOpenFileToolButton.DoOnAdded;
 begin
   inherited DoOnAdded;
 
   DropdownMenu := TPopupMenu.Create(Self);
   DropdownMenu.OnPopup := @RefreshMenu;
+  DropdownMenu.Images := TCustomImageList.Create(Self);
+  DropdownMenu.Images.Width := 16;
+  DropdownMenu.Images.Height := 16;
   Style := tbsDropDown;
 end;
 
@@ -440,12 +461,16 @@ procedure TOpenFileToolButton.RefreshMenu(Sender: TObject);
   procedure AddFile(const AFileName: string; const AOnClick: TNotifyEvent);
   var
     AMenuItem: TOpenFileMenuItem;
+    xExt: string;
   begin
     AMenuItem := TOpenFileMenuItem.Create(DropdownMenu);
+    DropdownMenu.Items.Add(AMenuItem);
     AMenuItem.OnClick := AOnClick;
     AMenuItem.FileName := AFileName;
-    DropdownMenu.Items.Add(AMenuItem);
     AMenuItem.Caption := AFilename;
+    xExt := ExtractFileExt(AFileName);
+    if SameFileName(xExt, '.lpi') or SameFileName(xExt, '.lpr') then
+      AMenuItem.ImageIndex := LoadProjectIconIntoImages(AFileName, DropdownMenu.Images, FIndex);
   end;
 
   procedure AddFiles(List: TStringList; MaxCount: integer; const AOnClick: TNotifyEvent);
@@ -463,12 +488,12 @@ procedure TOpenFileToolButton.RefreshMenu(Sender: TObject);
 begin
   DropdownMenu.Items.Clear;
 
-  // first add 8 recent projects
-  AddFiles(EnvironmentOptions.RecentProjectFiles, 8, @mnuProjectFile);
+  // first add recent projects
+  AddFiles(EnvironmentOptions.RecentProjectFiles, EnvironmentOptions.MaxRecentProjectFiles, @mnuProjectFile);
   // add a separator
   DropdownMenu.Items.AddSeparator;
-  // add 12 recent files
-  AddFiles(EnvironmentOptions.RecentOpenFiles, 12, @mnuOpenFile);
+  // then add recent files
+  AddFiles(EnvironmentOptions.RecentOpenFiles, EnvironmentOptions.MaxRecentOpenFiles, @mnuOpenFile);
 end;
 
 { TSetBuildModeToolButton }
@@ -480,7 +505,6 @@ begin
   DropdownMenu := TPopupMenu.Create(Self);
   DropdownMenu.OnPopup := @RefreshMenu;
   Style := tbsDropDown;
-  UpdateHints;
 end;
 
 procedure TSetBuildModeToolButton.mnuSetBuildModeClick(Sender: TObject);
@@ -541,16 +565,6 @@ begin
   // remove unused menuitems
   while aMenu.Items.Count > CurIndex do
     aMenu.Items[aMenu.Items.Count - 1].Free;
-end;
-
-class procedure TSetBuildModeToolButton.UpdateHints;
-const
-  cActiveBuildMode = '[%s]';
-begin
-  if Assigned(Project1) then
-    MainIDEBar.itmProjectBuildMode.Hint :=
-      lisChangeBuildMode + MainIDEBar.itmProjectBuildMode.GetShortcut + sLineBreak +
-      Format(cActiveBuildMode, [Project1.ActiveBuildMode.GetCaption]);
 end;
 
 { TJumpToSectionToolButton }
@@ -717,7 +731,7 @@ begin
   ActiveUnitInfo:=AnUnitInfo;
 end;
 
-function TMainIDEBase.GetMainBar: TComponent;
+function TMainIDEBase.GetMainBar: TForm;
 begin
   Result:=MainIDEBar;
 end;
@@ -829,19 +843,9 @@ begin
   AFilename:=AppendPathDelim(GetPrimaryConfigPath)+DefaultProjectOptionsFilename;
   if not FileExistsUTF8(AFilename) then
     CopySecondaryConfigFile(DefaultProjectOptionsFilename);
-  if FileExistsUTF8(AFilename) then begin
-    if AProject.ReadProject(AFilename,nil,True)<>mrOk then
+  if FileExistsUTF8(AFilename) then
+    if AProject.ReadProject(AFilename,nil,False)<>mrOk then
       DebugLn(['TMainIDEBase.DoLoadDefaultCompilerOptions failed']);
-  end else begin
-    // old way (<0.9.31)
-    // load default compiler options if exists
-    AFilename:=AppendPathDelim(GetPrimaryConfigPath)+DefaultProjectCompilerOptionsFilename;
-    if not FileExistsUTF8(AFilename) then
-      CopySecondaryConfigFile(DefaultProjectCompilerOptionsFilename);
-    if not FileExistsUTF8(AFilename) then exit;
-    if AProject.CompilerOptions.LoadFromFile(AFilename)<>mrOk then
-      DebugLn(['TMainIDEBase.DoLoadDefaultCompilerOptions failed']);
-  end;
 
   // change target file name
   AFilename:=ExtractFileName(AProject.CompilerOptions.TargetFilename);
@@ -921,7 +925,7 @@ procedure TMainIDEBase.CreateMenuSeparatorSection(
   const AName: String);
 begin
   Section:=RegisterIDEMenuSection(ParentSection,AName);
-  Section.ChildsAsSubMenu := false;
+  Section.ChildrenAsSubMenu := false;
 end;
 
 procedure TMainIDEBase.CreateMenuSubSection(ParentSection: TIDEMenuSection;
@@ -983,6 +987,7 @@ begin
     ParentMI:=itmFileOpenSave;
     CreateMenuItem(ParentMI, itmFileOpen, 'itmFileOpen', lisMenuOpen, 'laz_open');
     CreateMenuItem(ParentMI,itmFileRevert,'itmFileRevert',lisMenuRevert, 'menu_file_revert');
+    CreateMenuItem(ParentMI, itmFileOpenUnit, 'itmFileOpenUnit', lisMenuOpenUnit, 'laz_openunit');
     CreateMenuSubSection(ParentMI,itmFileRecentOpen,'itmFileRecentOpen',lisMenuOpenRecent);
     CreateMenuItem(ParentMI,itmFileSave,'itmFileSave',lisMenuSave,'laz_save');
     CreateMenuItem(ParentMI,itmFileSaveAs,'itmFileSaveAs',lisMenuSaveAs,'menu_saveas');
@@ -1170,7 +1175,7 @@ begin
     CreateMenuItem(ParentMI,itmSourceToggleComment,'itmSourceToggleComment',lisMenuToggleComment, 'menu_comment');
     CreateMenuItem(ParentMI,itmSourceEncloseBlock,'itmSourceEncloseBlock',lisMenuEncloseSelection);
     CreateMenuItem(ParentMI,itmSourceEncloseInIFDEF,'itmSourceEncloseInIFDEF',lisMenuEncloseInIFDEF);
-    CreateMenuItem(ParentMI,itmSourceCompleteCode,'itmSourceCompleteCode',lisMenuCompleteCode);
+    CreateMenuItem(ParentMI,itmSourceCompleteCodeInteractive,'itmSourceCompleteCodeInteractive',lisMenuCompleteCodeInteractive);
     CreateMenuItem(ParentMI,itmRefactorInvertAssignment,'itmInvertAssignment',uemInvertAssignment);
     CreateMenuItem(ParentMI,itmSourceUseUnit,'itmSourceUseUnit',lisMenuUseUnit);
     // Refactor
@@ -1261,6 +1266,8 @@ begin
     ParentMI:=itmProjectSaveSection;
     CreateMenuItem(ParentMI,itmProjectSave,'itmProjectSave',lisMenuSaveProject, 'menu_project_save');
     CreateMenuItem(ParentMI,itmProjectSaveAs,'itmProjectSaveAs',lisMenuSaveProjectAs, 'menu_project_saveas');
+    CreateMenuItem(ParentMI, itmProjectResaveFormsWithI18n, 'itmProjectResaveFo'
+      +'rmsWithI18n', lisMenuResaveFormsWithI18n);
     CreateMenuItem(ParentMI,itmProjectPublish,'itmProjectPublish',lisMenuPublishProject);
 
     CreateMenuSeparatorSection(mnuProject,itmProjectWindowSection,'itmProjectWindowSection');
@@ -1275,7 +1282,6 @@ begin
     CreateMenuItem(ParentMI,itmProjectViewUnits,'itmProjectViewUnits',lisMenuViewUnits, 'menu_view_units');
     CreateMenuItem(ParentMI,itmProjectViewForms,'itmProjectViewForms',lisMenuViewForms, 'menu_view_forms');
     CreateMenuItem(ParentMI,itmProjectViewSource,'itmProjectViewSource',lisMenuViewProjectSource, 'menu_project_viewsource');
-    CreateMenuItem(ParentMI,itmProjectBuildMode,'itmProjectBuildMode',lisChangeBuildMode+' ...', 'menu_compiler_options');
   end;
 end;
 
@@ -1290,11 +1296,12 @@ begin
     CreateMenuItem(ParentMI,itmRunMenuBuild,'itmRunMenuBuild',lisBuild,'menu_build_all');
     CreateMenuItem(ParentMI,itmRunMenuQuickCompile,'itmRunMenuQuickCompile',lisMenuQuickCompile,'menu_quick_compile');
     CreateMenuItem(ParentMI,itmRunMenuCleanUpAndBuild,'itmRunMenuCleanUpAndBuild',lisMenuCleanUpAndBuild,'menu_build');
-    CreateMenuItem(ParentMI,itmRunMenuBuildManyModes,'itmRunMenuBuildManyModes',lisMenuBuildManyModes,'menu_build_all');
+    CreateMenuItem(ParentMI,itmRunMenuBuildManyModes,'itmRunMenuBuildManyModes',lisMenuCompileManyModes,'menu_build_all');
     CreateMenuItem(ParentMI,itmRunMenuAbortBuild,'itmRunMenuAbortBuild',lisMenuAbortBuild,'menu_abort_build');
 
     CreateMenuSeparatorSection(mnuRun,itmRunnning,'itmRunnning');
     ParentMI:=itmRunnning;
+    CreateMenuItem(ParentMI,itmRunMenuRunWithoutDebugging,'itmRunMenuRunWithoutDebugging',lisMenuRunWithoutDebugging,'menu_run_withoutdebugging');
     CreateMenuItem(ParentMI,itmRunMenuRun,'itmRunMenuRun',lisMenuProjectRun,'menu_run');
     CreateMenuItem(ParentMI,itmRunMenuPause,'itmRunMenuPause',lisPause,'menu_pause', False);
     CreateMenuItem(ParentMI,itmRunMenuShowExecutionPoint,'itmRunMenuShowExecutionPoint',
@@ -1305,7 +1312,7 @@ begin
     CreateMenuItem(ParentMI,itmRunMenuRunToCursor,'itmRunMenuRunToCursor',lisMenuRunToCursor,'menu_run_cursor');
     CreateMenuItem(ParentMI,itmRunMenuStop,'itmRunMenuStop',lisStop,'menu_stop', False);
 
-    CreateMenuItem(ParentMI,itmRunMenuAttach,'itmRunMenuAttach',srkmecAttach,'', False);
+    CreateMenuItem(ParentMI,itmRunMenuAttach,'itmRunMenuAttach',srkmecAttach+' ...','', False);
     CreateMenuItem(ParentMI,itmRunMenuDetach,'itmRunMenuDetach',srkmecDetach,'', False);
 
     CreateMenuItem(ParentMI,itmRunMenuRunParameters,'itmRunMenuRunParameters',lisMenuRunParameters, 'menu_run_parameters');
@@ -1337,7 +1344,7 @@ begin
     CreateMenuSeparatorSection(mnuComponent,itmPkgOpening,'itmPkgOpening');
     ParentMI:=itmPkgOpening;
     CreateMenuItem(ParentMI,itmPkgNewPackage,'itmPkgNewPackage',lisMenuNewPackage);
-    CreateMenuItem(ParentMI,itmPkgOpenPackage,'itmPkgOpenPackage',lisMenuOpenPackage,'pkg_installed');
+    CreateMenuItem(ParentMI,itmPkgOpenLoadedPackage,'itmPkgOpenPackage',lisMenuOpenPackage,'pkg_installed');
     CreateMenuItem(ParentMI,itmPkgOpenPackageFile,'itmPkgOpenPackageFile',lisMenuOpenPackageFile,'pkg_open');
     CreateMenuItem(ParentMI,itmPkgOpenPackageOfCurUnit,'itmPkgOpenPackageOfCurUnit',lisMenuOpenPackageOfCurUnit);
     CreateMenuSubSection(ParentMI,itmPkgOpenRecent,'itmPkgOpenRecent',lisMenuOpenRecentPkg);
@@ -1345,7 +1352,7 @@ begin
     CreateMenuSeparatorSection(mnuComponent,itmPkgUnits,'itmPkgUnits');
     ParentMI:=itmPkgUnits;
     CreateMenuItem(ParentMI,itmPkgAddCurFileToPkg,'itmPkgAddCurFileToPkg',lisMenuAddCurFileToPkg,'pkg_add');
-    CreateMenuItem(ParentMI, itmPkgAddNewComponentToPkg, 'itmPkgAddNewComponentToPkg', lisMenuNewComponent, 'pkg_add');
+    CreateMenuItem(ParentMI, itmPkgAddNewComponentToPkg, 'itmPkgAddNewComponentToPkg', lisMenuNewComponent+' ...', 'pkg_add');
 
     CreateMenuSeparatorSection(mnuComponent,itmPkgGraphSection,'itmPkgGraphSection');
     ParentMI:=itmPkgGraphSection;
@@ -1415,7 +1422,7 @@ begin
     // Populated later with a list of editor names
     CreateMenuSeparatorSection(mnuWindow,itmWindowLists,'itmWindowLists');
     CreateMenuSeparatorSection(mnuWindow,itmCenterWindowLists,'itmCenterWindowLists');
-    itmCenterWindowLists.ChildsAsSubMenu:=true;
+    itmCenterWindowLists.ChildrenAsSubMenu:=true;
     itmCenterWindowLists.Caption:=lisCenterALostWindow;
     CreateMenuSeparatorSection(mnuWindow,itmTabLists,'itmTabLists');
     CreateMenuSubSection(itmTabLists,itmTabListProject,'itmTabListProject', dlgEnvProject);
@@ -1495,6 +1502,7 @@ begin
     itmFileNewForm.Command:=GetCommand(ecNewForm, TNewFormToolButton);
     itmFileNewOther.Command:=GetCommand(ecNew);
     itmFileOpen.Command:=GetCommand(ecOpen, TOpenFileToolButton);
+    itmFileOpenUnit.Command:=GetCommand(ecOpenUnit);
     itmFileRevert.Command:=GetCommand(ecRevert);
     itmFileSave.Command:=GetCommand(ecSave);
     itmFileSaveAs.Command:=GetCommand(ecSaveAs);
@@ -1552,9 +1560,11 @@ begin
     itmJumpToImplementationUses.Command:=GetCommand(ecJumpToImplementationUses, TJumpToSectionToolButton);
     itmJumpToInitialization.Command:=GetCommand(ecJumpToInitialization, TJumpToSectionToolButton);
     GetCmdAndBtn(ecJumpToProcedureHeader, xBtnItem);
+    xBtnItem.Caption := lisMenuJumpToProcedureHeader;
     xBtnItem.OnClick := @SourceEditorManager.JumpToProcedureHeaderClicked;
     xBtnItem.ImageIndex := IDEImages.LoadImage(16, 'menu_jumpto_procedureheader');
     GetCmdAndBtn(ecJumpToProcedureBegin, xBtnItem);
+    xBtnItem.Caption := lisMenuJumpToProcedureBegin;
     xBtnItem.ImageIndex := IDEImages.LoadImage(16, 'menu_jumpto_procedurebegin');
     xBtnItem.OnClick := @SourceEditorManager.JumpToProcedureBeginClicked;
     itmFindBlockOtherEnd.Command:=GetCommand(ecFindBlockOtherEnd);
@@ -1587,7 +1597,7 @@ begin
     itmSourceToggleComment.Command:=GetCommand(ecToggleComment);
     itmSourceEncloseBlock.Command:=GetCommand(ecSelectionEnclose);
     itmSourceEncloseInIFDEF.Command:=GetCommand(ecSelectionEncloseIFDEF);
-    itmSourceCompleteCode.Command:=GetCommand(ecCompleteCode);
+    itmSourceCompleteCodeInteractive.Command:=GetCommand(ecCompleteCodeInteractive);
     itmSourceUseUnit.Command:=GetCommand(ecUseUnit);
 
     itmSourceSyntaxCheck.Command:=GetCommand(ecSyntaxCheck);
@@ -1640,6 +1650,7 @@ begin
     itmProjectClose.Command:=GetCommand(ecCloseProject);
     itmProjectSave.Command:=GetCommand(ecSaveProject);
     itmProjectSaveAs.Command:=GetCommand(ecSaveProjectAs);
+    itmProjectResaveFormsWithI18n.Command:=GetCommand(ecProjectResaveFormsWithI18n);
     itmProjectPublish.Command:=GetCommand(ecPublishProject);
     itmProjectInspector.Command:=GetCommand(ecProjectInspector);
     itmProjectOptions.Command:=GetCommand(ecProjectOptions);
@@ -1648,7 +1659,11 @@ begin
     itmProjectViewUnits.Command:=GetCommand(ecViewProjectUnits);
     itmProjectViewForms.Command:=GetCommand(ecViewProjectForms);
     itmProjectViewSource.Command:=GetCommand(ecViewProjectSource);
-    itmProjectBuildMode.Command:=GetCommand(ecProjectChangeBuildMode,TSetBuildModeToolButton);
+    GetCmdAndBtn(ecProjectChangeBuildMode, xBtnItem);
+    xBtnItem.Caption := lisChangeBuildMode;
+    xBtnItem.ToolButtonClass:=TSetBuildModeToolButton;
+    xBtnItem.ImageIndex := IDEImages.LoadImage(16, 'menu_compiler_options');
+    xBtnItem.OnClick := @mnuBuildModeClicked;
 
     // run menu
     itmRunMenuCompile.Command:=GetCommand(ecCompile);
@@ -1657,6 +1672,7 @@ begin
     itmRunMenuCleanUpAndBuild.Command:=GetCommand(ecCleanUpAndBuild);
     itmRunMenuBuildManyModes.Command:=GetCommand(ecBuildManyModes);
     itmRunMenuAbortBuild.Command:=GetCommand(ecAbortBuild);
+    itmRunMenuRunWithoutDebugging.Command:=GetCommand(ecRunWithoutDebugging);
     itmRunMenuRun.Command:=GetCommand(ecRun);
     itmRunMenuPause.Command:=GetCommand(ecPause);
     itmRunMenuStepInto.Command:=GetCommand(ecStepInto);
@@ -1674,7 +1690,7 @@ begin
 
     // package menu
     itmPkgNewPackage.Command:=GetCommand(ecNewPackage);
-    itmPkgOpenPackage.Command:=GetCommand(ecOpenPackage);
+    itmPkgOpenLoadedPackage.Command:=GetCommand(ecOpenPackage);
     itmPkgOpenPackageFile.Command:=GetCommand(ecOpenPackageFile);
     itmPkgOpenPackageOfCurUnit.Command:=GetCommand(ecOpenPackageOfCurUnit);
     itmPkgAddCurFileToPkg.Command:=GetCommand(ecAddCurFileToPkg);
@@ -1767,7 +1783,7 @@ begin
     AForm:=Screen.Forms[i];
     //debugln(['TMainIDEBase.UpdateWindowMenu ',DbgSName(AForm),' Vis=',AForm.IsVisible,' Des=',DbgSName(AForm.Designer)]);
     if (not AForm.IsVisible) or (AForm=MainIDEBar) or (AForm=SplashForm)
-    or (AForm.Designer<>nil) or (WindowsList.IndexOf(AForm)>=0) then
+    or IsFormDesign(AForm) or (WindowsList.IndexOf(AForm)>=0) then
       continue;
     if IDEDockMaster<>nil then
     begin
@@ -1790,7 +1806,7 @@ begin
     // in the 'bring to front' list
     CurMenuItem := GetMenuItem(i, itmWindowLists);
     if EnvironmentOptions.Desktop.IDENameForDesignedFormList
-    and (TCustomForm(WindowsList[i]).Designer<>nil) then
+    and IsFormDesign(TWinControl(WindowsList[i])) then
       CurMenuItem.Caption:=TCustomForm(WindowsList[i]).Name
     else
        CurMenuItem.Caption:=TCustomForm(WindowsList[i]).Caption;
@@ -1799,7 +1815,7 @@ begin
     // in the 'center' list
     CurMenuItem := GetMenuItem(i, itmCenterWindowLists);
     if EnvironmentOptions.Desktop.IDENameForDesignedFormList
-    and (TCustomForm(WindowsList[i]).Designer<>nil) then
+    and IsFormDesign(TWinControl(WindowsList[i])) then
       CurMenuItem.Caption:=TCustomForm(WindowsList[i]).Name
     else
       CurMenuItem.Caption:=TCustomForm(WindowsList[i]).Caption;

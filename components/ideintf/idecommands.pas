@@ -152,6 +152,7 @@ const
   ecUseUnit                 = ecFirstLazarus + 122;
   ecFindOverloads           = ecFirstLazarus + 123;
   ecFindUsedUnitRefs        = ecFirstLazarus + 124;
+  ecCompleteCodeInteractive = ecFirstLazarus + 125;
 
   // file menu
   ecNew                     = ecFirstLazarus + 201;
@@ -167,6 +168,7 @@ const
   ecCleanDirectory          = ecFirstLazarus + 212;
   ecRestart                 = ecFirstLazarus + 213;
   ecQuit                    = ecFirstLazarus + 214;
+  ecOpenUnit                = ecFirstLazarus + 215;
 
   // IDE navigation
   ecToggleFormUnit          = ecFirstLazarus + 301;
@@ -255,6 +257,7 @@ const
   ecCleanUpAndBuild         = ecFirstLazarus + 403;
   ecBuildManyModes          = ecFirstLazarus + 404;
   ecAbortBuild              = ecFirstLazarus + 405;
+  ecRunWithoutDebugging     = ecFirstLazarus + 409;
   ecRun                     = ecFirstLazarus + 410;
   ecPause                   = ecFirstLazarus + 411;
   ecStepInto                = ecFirstLazarus + 412;
@@ -299,6 +302,7 @@ const
   ecViewProjectSource       = ecFirstLazarus + 512;
   ecProjectOptions          = ecFirstLazarus + 513;
   ecProjectChangeBuildMode  = ecFirstLazarus + 514;
+  ecProjectResaveFormsWithI18n = ecFirstLazarus + 515;
 
   // package menu
   ecOpenPackage             = ecFirstLazarus + 600;
@@ -502,7 +506,7 @@ type
   end;
   PIDEShortCut = ^TIDEShortCut;
 
-  { TIDECommandCategory
+  { TIDECommandCategory - list of TKeyCommandRelation
     TIDECommandCategory is used to divide the commands in handy packets }
     
   TIDECommandCategory = class(TList)
@@ -549,8 +553,8 @@ type
     procedure SetOnExecute(const aOnExecute: TNotifyEvent);
     procedure SetOnExecuteProc(const aOnExecuteProc: TNotifyProcedure);
     procedure SetEnabled(const AEnabled: Boolean);
-    procedure SetVisible(const AVisible: Boolean);
     procedure SetCaption(const ACaption: string);
+    procedure SetHint(const AHint: string);
   protected
     function GetLocalizedName: string; virtual;
     procedure SetLocalizedName(const AValue: string); virtual;
@@ -584,8 +588,9 @@ type
     procedure DoOnUpdate(Sender: TObject); overload;
   public
     property Enabled: Boolean write SetEnabled;
-    property Visible: Boolean write SetVisible;
     property Caption: string write SetCaption;
+    property Hint: string write SetHint;
+    // don't add Visible property here - it is not generic. Tool buttons should never be hidden programmatically
   public
     property Name: String read FName;
     property Command: word read FCommand;// see the ecXXX constants above
@@ -662,8 +667,10 @@ type
     FOnClickMethod: TNotifyEvent;
     FOnClickProc: TNotifyProcedure;
     FOnRequestCaption: TGetHintCaptionEvent;
-    FVisible: Boolean;
+    FSyncProperties: Boolean;
+    FBlockSync: Integer;
   protected
+    function SyncAvailable: Boolean; virtual;
     function GetCaption: string; virtual;
     procedure SetCommand(const AValue: TIDECommand); virtual;
     procedure SetName(const aName: string); virtual;
@@ -672,7 +679,6 @@ type
     procedure SetChecked(const aChecked: Boolean); virtual;
     procedure SetHint(const aHint: string); virtual;
     procedure SetImageIndex(const aImageIndex: Integer); virtual;
-    procedure SetVisible(const aVisible: Boolean); virtual;
     procedure SetOnClickMethod(const aOnClick: TNotifyEvent); virtual;
     procedure SetOnClickProc(const aOnClickProc: TNotifyProcedure); virtual;
     procedure SetOnRequestCaption(
@@ -686,20 +692,24 @@ type
     procedure DoOnClick; overload;
     procedure DoOnClick(Sender: TObject); virtual; overload;
     function DoOnRequestCaption(Sender: TObject): Boolean; virtual;
+
+    procedure BlockSync;
+    procedure UnblockSync;
   public
     function GetCaptionWithShortCut: String; virtual;
     function GetHintOrCaptionWithShortCut: String; virtual;
     function GetShortcut: String; virtual;
 
     property Command: TIDECommand read FCommand write SetCommand;
+    property SyncProperties: Boolean read FSyncProperties write FSyncProperties;
     property Name: string read FName write SetName;
     property Caption: string read GetCaption write SetCaption;
     property Hint: string read FHint write SetHint;
     property Enabled: Boolean read FEnabled write SetEnabled;
     property Checked: Boolean read FChecked write SetChecked;
-    property Visible: Boolean read FVisible write SetVisible;
     property ImageIndex: Integer read FImageIndex write SetImageIndex;
     property ResourceName: string write SetResourceName;
+    // don't add Visible property here - it is not generic. Tool buttons should never be hidden programmatically
 
     property OnClick: TNotifyEvent read FOnClickMethod write SetOnClickMethod;
     property OnClickProc: TNotifyProcedure read FOnClickProc write SetOnClickProc;
@@ -815,6 +825,7 @@ function CompareIDEShortCuts(Data1, Data2: Pointer): integer;
 function CompareIDEShortCutKey1s(Data1, Data2: Pointer): integer;
 function IdentToIDECommand(const Ident: string; var Cmd: longint): boolean;
 function IDECommandToIdent(Cmd: longint; var Ident: string): boolean;
+function IDECommandToIdent(Cmd: longint): string;
 procedure GetIDEEditorCommandValues(Proc: TGetStrProc);
 
 implementation
@@ -1222,14 +1233,6 @@ begin
   Change;
 end;
 
-procedure TIDECommand.SetVisible(const AVisible: Boolean);
-var
-  xUser: TIDESpecialCommand;
-begin
-  for xUser in FUsers do
-    xUser.Visible := AVisible;
-end;
-
 procedure TIDECommand.UserAdded(const aUser: TIDESpecialCommand);
 begin
   FUsers.Add(aUser);
@@ -1289,7 +1292,15 @@ begin
   if CompareMethods(TMethod(FOnExecute), TMethod(aOnExecute)) then Exit;
   FOnExecute := aOnExecute;
   for xUser in FUsers do
-    xUser.OnClick := FOnExecute;
+    if xUser.SyncProperties then
+    begin
+      xUser.BlockSync;
+      try
+        xUser.OnClick := aOnExecute;
+      finally
+        xUser.UnblockSync;
+      end;
+    end;
 end;
 
 procedure TIDECommand.SetOnExecuteProc(const aOnExecuteProc: TNotifyProcedure);
@@ -1299,7 +1310,15 @@ begin
   if FOnExecuteProc = aOnExecuteProc then Exit;
   FOnExecuteProc := aOnExecuteProc;
   for xUser in FUsers do
-    xUser.OnClickProc := FOnExecuteProc;
+    if xUser.SyncProperties then
+    begin
+      xUser.BlockSync;
+      try
+        xUser.OnClickProc := aOnExecuteProc;
+      finally
+        xUser.UnblockSync;
+      end;
+    end;
 end;
 
 procedure TIDECommand.SetCategory(const AValue: TIDECommandCategory);
@@ -1321,7 +1340,31 @@ var
   xUser: TIDESpecialCommand;
 begin
   for xUser in FUsers do
-    xUser.Enabled := AEnabled;
+    if xUser.SyncProperties then
+    begin
+      xUser.BlockSync;
+      try
+        xUser.Enabled := AEnabled;
+      finally
+        xUser.UnblockSync;
+      end;
+    end;
+end;
+
+procedure TIDECommand.SetHint(const AHint: string);
+var
+  xUser: TIDESpecialCommand;
+begin
+  for xUser in FUsers do
+    if xUser.SyncProperties then
+    begin
+      xUser.BlockSync;
+      try
+        xUser.Hint := AHint;
+      finally
+        xUser.UnblockSync;
+      end;
+    end;
 end;
 
 function TIDECommand.AsShortCut: TShortCut;
@@ -1379,6 +1422,8 @@ end;
 
 destructor TIDECommand.Destroy;
 begin
+  if Category <> nil then
+    Category := nil;
   FUsers.Free;
   inherited Destroy;
 end;
@@ -1416,7 +1461,15 @@ var
   xUser: TIDESpecialCommand;
 begin
   for xUser in FUsers do
-    xUser.Caption := ACaption;
+    if xUser.SyncProperties then
+    begin
+      xUser.BlockSync;
+      try
+        xUser.Caption := ACaption;
+      finally
+        xUser.UnblockSync;
+      end;
+    end;
 end;
 
 procedure TIDECommand.ClearShortcutA;
@@ -1433,7 +1486,7 @@ function TIDECommand.GetCategoryAndName: string;
 begin
   Result:='"'+GetLocalizedName+'"';
   if Category<>nil then
-    Result:=Result+' in "'+Category.Description+'"';
+    Result:='"'+Category.Description+'" -> '+Result;
 end;
 
 function TIDECommand.Execute(Sender: TObject): boolean;
@@ -1525,10 +1578,15 @@ constructor TIDESpecialCommand.Create(const aName: string);
 begin
   inherited Create;
 
+  FSyncProperties:=true;
   FName := aName;
   FEnabled:=true;
-  FVisible:=true;
   FImageIndex:=-1;
+end;
+
+procedure TIDESpecialCommand.BlockSync;
+begin
+  Inc(FBlockSync);
 end;
 
 destructor TIDESpecialCommand.Destroy;
@@ -1607,10 +1665,17 @@ var
 begin
   if FCaption=aCaption then Exit;
   FCaption := aCaption;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.Caption:=aCaption;
+      if (xUser <> Self) and xUser.SyncProperties then
+      begin
+        xUser.BlockSync;
+        try
+          xUser.Caption:=aCaption;
+        finally
+          xUser.UnblockSync;
+        end;
+      end;
 end;
 
 procedure TIDESpecialCommand.SetChecked(const aChecked: Boolean);
@@ -1619,32 +1684,38 @@ var
 begin
   if FChecked=aChecked then Exit;
   FChecked := aChecked;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.Checked:=aChecked;
+      if (xUser <> Self) and xUser.SyncProperties then
+      begin
+        xUser.BlockSync;
+        try
+          xUser.Checked:=aChecked;
+        finally
+          xUser.UnblockSync;
+        end;
+      end;
 end;
 
 procedure TIDESpecialCommand.SetCommand(const AValue: TIDECommand);
 begin
   if FCommand = AValue then
     Exit;
-  if FCommand <> nil then
-  begin
-    //DebugLn('TIDEMenuCommand.SetCommand OLD ',ShortCutToText(FCommand.AsShortCut),' FCommand.Name=',FCommand.Name,' Name=',Name,' FCommand=',dbgs(Pointer(FCommand)));
-    if FCommand.OnExecute=OnClick then
-      FCommand.OnExecute:=nil;
-    if FCommand.OnExecuteProc=OnClickProc then
-      FCommand.OnExecuteProc:=nil;
-  end;
   FCommand := AValue;
   if FCommand <> nil then
   begin
-    if FCommand.OnExecute = nil then
-      FCommand.OnExecute := OnClick;
-    if FCommand.OnExecuteProc = nil then
-      FCommand.OnExecuteProc := OnClickProc;
-    //DebugLn('TIDEMenuCommand.SetCommand NEW ',ShortCutToText(FCommand.AsShortCut),' FCommand.Name=',FCommand.Name,' Name=',Name,' FCommand=',dbgs(Pointer(FCommand)));
+    if (FCommand.OnExecute=nil) and (OnClick<>nil) then
+      FCommand.OnExecute := OnClick
+    else
+    if (OnClick=nil) and (FCommand.OnExecute<>nil) then
+      OnClick := FCommand.OnExecute;
+
+    if (FCommand.OnExecuteProc=nil) and (OnClickProc<>nil) then
+      FCommand.OnExecuteProc := OnClickProc
+    else
+    if (OnClickProc=nil) and (FCommand.OnExecuteProc<>nil) then
+      OnClickProc := FCommand.OnExecuteProc;
+
     FCommand.UserAdded(Self);
     FCommand.Change;
   end;
@@ -1656,10 +1727,17 @@ var
 begin
   if FEnabled=aEnabled then Exit;
   FEnabled := aEnabled;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.Enabled:=aEnabled;
+      if (xUser <> Self) and xUser.SyncProperties then
+      begin
+        xUser.BlockSync;
+        try
+          xUser.Enabled:=aEnabled;
+        finally
+          xUser.UnblockSync;
+        end;
+      end;
 end;
 
 procedure TIDESpecialCommand.SetHint(const aHint: string);
@@ -1668,10 +1746,17 @@ var
 begin
   if FHint=aHint then Exit;
   FHint := aHint;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.Hint:=aHint;
+      if (xUser <> Self) and xUser.SyncProperties then
+      begin
+        xUser.BlockSync;
+        try
+          xUser.Hint:=aHint;
+        finally
+          xUser.UnblockSync;
+        end;
+      end;
 end;
 
 procedure TIDESpecialCommand.SetImageIndex(const aImageIndex: Integer);
@@ -1680,10 +1765,17 @@ var
 begin
   if FImageIndex=aImageIndex then Exit;
   FImageIndex := aImageIndex;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.ImageIndex:=aImageIndex;
+      if (xUser <> Self) and xUser.SyncProperties then
+      begin
+        xUser.BlockSync;
+        try
+          xUser.ImageIndex:=aImageIndex;
+        finally
+          xUser.UnblockSync;
+        end;
+      end;
 end;
 
 procedure TIDESpecialCommand.SetName(const aName: string);
@@ -1695,7 +1787,7 @@ procedure TIDESpecialCommand.SetOnClickMethod(const aOnClick: TNotifyEvent);
 begin
   if CompareMethods(TMethod(FOnClickMethod), TMethod(aOnClick)) then Exit;
   FOnClickMethod := aOnClick;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     FCommand.OnExecute:=aOnClick;
 end;
 
@@ -1703,7 +1795,7 @@ procedure TIDESpecialCommand.SetOnClickProc(const aOnClickProc: TNotifyProcedure
 begin
   if FOnClickProc = aOnClickProc then Exit;
   FOnClickProc := aOnClickProc;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     FCommand.OnExecuteProc:=aOnClickProc;
 end;
 
@@ -1714,10 +1806,17 @@ var
 begin
   if FOnRequestCaption = aOnRequestCaptionHint then Exit;
   FOnRequestCaption := aOnRequestCaptionHint;
-  if FCommand<> nil then
+  if (FCommand<> nil) and SyncAvailable then
     for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.OnRequestCaptionHint:=aOnRequestCaptionHint;
+      if (xUser <> Self) and xUser.SyncProperties then
+      begin
+        xUser.BlockSync;
+        try
+          xUser.OnRequestCaptionHint:=aOnRequestCaptionHint;
+        finally
+          xUser.UnblockSync;
+        end;
+      end;
 end;
 
 procedure TIDESpecialCommand.SetResourceName(const aResourceName: string);
@@ -1734,16 +1833,14 @@ begin
   //nothing here, override in descendants
 end;
 
-procedure TIDESpecialCommand.SetVisible(const aVisible: Boolean);
-var
-  xUser: TIDESpecialCommand;
+function TIDESpecialCommand.SyncAvailable: Boolean;
 begin
-  if FVisible=aVisible then Exit;
-  FVisible := aVisible;
-  if FCommand<> nil then
-    for xUser in FCommand.FUsers do
-      if xUser <> Self then
-        xUser.Visible:=aVisible;
+  Result := FSyncProperties and (FBlockSync=0);
+end;
+
+procedure TIDESpecialCommand.UnblockSync;
+begin
+  Dec(FBlockSync);
 end;
 
 { TIDESpecialCommandEnumerator }
@@ -1810,7 +1907,7 @@ begin
 end;
 
 const
-  IDEEditorCommandStrs: array[0..312] of TIdentMapEntry = (
+  IDEEditorCommandStrs: array[0..315] of TIdentMapEntry = (
   // search
     (Value: ecFind;                                   Name: 'ecFind'),
     (Value: ecFindAgain;                              Name: 'ecFindAgain'),
@@ -1912,6 +2009,7 @@ const
     (Value: ecUseUnit;                                Name: 'ecUseUnit'),
     (Value: ecFindOverloads;                          Name: 'ecFindOverloads'),
     (Value: ecFindUsedUnitRefs;                       Name: 'ecFindUsedUnitRefs'),
+    (Value: ecCompleteCodeInteractive;                Name: 'ecCompleteCodeInteractive'),
 
   // file menu
     (Value: ecNew;                                    Name: 'ecNew'),
@@ -2013,6 +2111,7 @@ const
     (Value: ecQuickCompile;                           Name: 'ecQuickCompile'),
     (Value: ecCleanUpAndBuild;                        Name: 'ecCleanUpAndBuild'),
     (Value: ecAbortBuild;                             Name: 'ecAbortBuild'),
+    (Value: ecRunWithoutDebugging;                    Name: 'ecRunWithoutDebugging'),
     (Value: ecRun;                                    Name: 'ecRun'),
     (Value: ecPause;                                  Name: 'ecPause'),
     (Value: ecStepInto;                               Name: 'ecStepInto'),
@@ -2057,6 +2156,7 @@ const
     (Value: ecViewProjectSource;                      Name: 'ecViewProjectSource'),
     (Value: ecProjectOptions;                         Name: 'ecProjectOptions'),
     (Value: ecProjectChangeBuildMode;                 Name: 'ecProjectChangeBuildMode'),
+    (Value: ecProjectResaveFormsWithI18n;             Name: 'ecProjectResaveFormsWithI18n'),
 
   // package menu
     (Value: ecOpenPackage;                            Name: 'ecOpenPackage'),
@@ -2187,6 +2287,13 @@ end;
 function IDECommandToIdent(Cmd: longint; var Ident: string): boolean;
 begin
   Result := IntToIdent(Cmd, Ident, IDEEditorCommandStrs);
+end;
+
+function IDECommandToIdent(Cmd: longint): string;
+begin
+  Result := '';
+  if not IDECommandToIdent(Cmd, Result) then
+    raise Exception.CreateFmt('IDECommandToIdent: command %d not found', [Cmd]);
 end;
 
 procedure GetIDEEditorCommandValues(Proc: TGetStrProc);

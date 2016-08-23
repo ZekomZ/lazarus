@@ -30,13 +30,15 @@ unit UseUnitDlg;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, Buttons,
-  ButtonPanel, Dialogs, LCLProc, FileProcs, Graphics, LCLType,
-  SourceEditor, LazIDEIntf, IDEImagesIntf, LazarusIDEStrConsts, ProjectIntf,
-  Project, CodeCache, CodeToolManager, IdentCompletionTool, CodeTree,
-  ListFilterEdit, LinkScanner;
+  Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, Buttons, ButtonPanel,
+  Dialogs, LCLProc, FileProcs, Graphics, LCLType, SourceEditor, LazIDEIntf,
+  IDEImagesIntf, LazarusIDEStrConsts, ProjectIntf, IDEWindowIntf, Project,
+  CodeCache, CodeToolManager, IdentCompletionTool, CodeTree, ListFilterEdit,
+  LinkScanner, EnvironmentOpts, MainIntf, LazFileUtils;
 
 type
+
+  TUseUnitDialogType = (udUseUnit, udOpenUnit);
 
   { TUseUnitDialog }
 
@@ -47,6 +49,8 @@ type
     UnitsListBox: TListBox;
     SectionRadioGroup: TRadioGroup;
     procedure AllUnitsCheckBoxChange(Sender: TObject);
+    procedure FilterEditAfterFilter(Sender: TObject);
+    procedure FormClose(Sender: TObject; var {%H-}CloseAction: TCloseAction);
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure SectionRadioGroupClick(Sender: TObject);
@@ -60,9 +64,11 @@ type
     FMainUsedUnits: TStringList;
     FImplUsedUnits: TStringList;
     FProjUnits, FOtherUnits: TStringList;
+    DlgType: TUseUnitDialogType;
     procedure AddImplUsedUnits;
     function GetProjUnits(SrcEdit: TSourceEditor): Boolean;
     procedure CreateOtherUnitsList;
+    function SelectedUnitFileName: string;
     function SelectedUnit: string;
     function InterfaceSelected: Boolean;
     procedure DetermineUsesSection(ACode: TCodeBuffer);
@@ -71,18 +77,19 @@ type
 
   end; 
 
-function ShowUseUnitDialog: TModalResult;
+function ShowUseUnitDialog(const DefText: string; const aDlgType: TUseUnitDialogType): TModalResult;
 
 implementation
 
 {$R *.lfm}
 
-function ShowUseUnitDialog: TModalResult;
+function ShowUseUnitDialog(const DefText: string; const aDlgType: TUseUnitDialogType): TModalResult;
 var
   UseUnitDlg: TUseUnitDialog;
   SrcEdit: TSourceEditor;
   s: String;
   CTRes: Boolean;
+  EnvOptions: TUseUnitDlgOptions;
 begin
   Result:=mrOk;
   if not LazarusIDE.BeginCodeTools then begin
@@ -97,6 +104,12 @@ begin
   end;
   UseUnitDlg:=TUseUnitDialog.Create(nil);
   try
+    UseUnitDlg.DlgType := aDlgType;
+    case aDlgType of
+      udUseUnit: UseUnitDlg.Caption := dlgUseUnitCaption;
+      udOpenUnit: UseUnitDlg.Caption := lisOpenUnit;
+    end;
+
     if not UseUnitDlg.GetProjUnits(SrcEdit) then begin
       debugln(['ShowUseUnitDialog UseUnitDlg.GetProjUnits(SrcEdit) failed: ',SrcEdit.FileName]);
       Exit(mrCancel);
@@ -110,27 +123,52 @@ begin
       // automatic choice of dest uses-section by cursor position
       UseUnitDlg.DetermineUsesSection(SrcEdit.CodeBuffer);
 
-    if UseUnitDlg.FilterEdit.Items.Count = 0 then
-      // no available units from current project => turn on "all units"
-      UseUnitDlg.AllUnitsCheckBox.Checked := True;
+    // Read recent properties
+    EnvOptions := EnvironmentOptions.UseUnitDlgOptions;
+    UseUnitDlg.AllUnitsCheckBox.Checked := EnvOptions.AllUnits;
+    UseUnitDlg.SectionRadioGroup.ItemIndex := Ord(EnvOptions.AddToImplementation);
+    UseUnitDlg.SectionRadioGroup.Visible := aDlgType=udUseUnit;
 
-    if UseUnitDlg.FilterEdit.Items.Count = 0 then begin
+    if (UseUnitDlg.FilterEdit.Items.Count = 0)
+    and UseUnitDlg.AllUnitsCheckBox.Checked then begin
       // No available units. This may not be a pascal source file.
       ShowMessage(dlgNoAvailableUnits);
       Exit(mrCancel);
     end;
 
+    UseUnitDlg.FilterEdit.Text := DefText;
+
     // Show the dialog.
     if UseUnitDlg.ShowModal=mrOk then begin
-      s:=UseUnitDlg.SelectedUnit;
-      if s <> '' then begin
-        if UseUnitDlg.InterfaceSelected then
-          CTRes := CodeToolBoss.AddUnitToMainUsesSection(SrcEdit.CodeBuffer, s, '')
-        else
-          CTRes:=CodeToolBoss.AddUnitToImplementationUsesSection(SrcEdit.CodeBuffer, s, '');
-        if not CTRes then begin
-          LazarusIDE.DoJumpToCodeToolBossError;
-          exit(mrCancel);
+
+      // Write recent properties
+      EnvOptions.AllUnits := UseUnitDlg.AllUnitsCheckBox.Checked;
+      if aDlgType=udUseUnit then
+        EnvOptions.AddToImplementation := Boolean(UseUnitDlg.SectionRadioGroup.ItemIndex);
+      EnvironmentOptions.UseUnitDlgOptions := EnvOptions;
+
+      case aDlgType of
+        udUseUnit:
+        begin
+          s:=UseUnitDlg.SelectedUnit;
+          if s <> '' then begin
+            if UseUnitDlg.InterfaceSelected then
+              CTRes := CodeToolBoss.AddUnitToMainUsesSection(SrcEdit.CodeBuffer, s, '')
+            else
+              CTRes:=CodeToolBoss.AddUnitToImplementationUsesSection(SrcEdit.CodeBuffer, s, '');
+            if not CTRes then begin
+              LazarusIDE.DoJumpToCodeToolBossError;
+              exit(mrCancel);
+            end;
+          end;
+        end;
+        udOpenUnit:
+        begin
+          s:=UseUnitDlg.SelectedUnitFileName;
+          if FileExistsUTF8(s) then
+            Result := MainIDEInterface.DoOpenEditorFile(s,-1,-1,[ofAddToRecent])
+          else
+            exit(mrCancel);
         end;
       end;
     end;
@@ -140,19 +178,17 @@ begin
   end;
 end;
 
-
 { TUseUnitDialog }
 
 procedure TUseUnitDialog.FormCreate(Sender: TObject);
 begin
   // Internationalization
-  Caption := dlgUseUnitCaption;
+  IDEDialogLayoutList.ApplyLayout(Self,500,460);
   AllUnitsCheckBox.Caption := dlgShowAllUnits;
   SectionRadioGroup.Caption := dlgInsertSection;
   SectionRadioGroup.Items.Clear;
   SectionRadioGroup.Items.Add(dlgInsertInterface);
   SectionRadioGroup.Items.Add(dlgInsertImplementation);
-  SectionRadioGroup.ItemIndex:=0;
   ButtonPanel1.OKButton.Caption:=lisMenuOk;
   ButtonPanel1.CancelButton.Caption:=lisCancel;
   UnitImgInd := IDEImages.LoadImage(16, 'item_unit');
@@ -200,6 +236,12 @@ begin
   if Visible then
     FilterEdit.SetFocus;
   FilterEdit.InvalidateFilter;
+end;
+
+procedure TUseUnitDialog.FormClose(Sender: TObject;
+  var CloseAction: TCloseAction);
+begin
+  IDEDialogLayoutList.SaveLayout(Self);
 end;
 
 procedure TUseUnitDialog.UnitsListBoxDblClick(Sender: TObject);
@@ -290,16 +332,24 @@ var
   x: Integer;
 begin
   Result := False;
-  FMainUsedUnits := nil;
-  FImplUsedUnits := nil;
+  FreeAndNil(FMainUsedUnits);
+  FreeAndNil(FImplUsedUnits);
   if SrcEdit = nil then Exit;
   Assert(Assigned(SrcEdit.CodeBuffer));
-  if not CodeToolBoss.FindUsedUnitNames(SrcEdit.CodeBuffer, TStrings(FMainUsedUnits),
-                                                            TStrings(FImplUsedUnits))
-  then begin
-    DebugLn(['ShowUseProjUnitDialog CodeToolBoss.FindUsedUnitNames failed']);
-    LazarusIDE.DoJumpToCodeToolBossError;
-    Exit;
+  if DlgType=udUseUnit then
+  begin
+    if not CodeToolBoss.FindUsedUnitNames(SrcEdit.CodeBuffer, TStrings(FMainUsedUnits),
+                                                              TStrings(FImplUsedUnits))
+    then begin
+      DebugLn(['ShowUseProjUnitDialog CodeToolBoss.FindUsedUnitNames failed']);
+      LazarusIDE.DoJumpToCodeToolBossError;
+      Exit;
+    end;
+  end else
+  begin
+    // don't filter units in current uses sections - use empty lists
+    FMainUsedUnits := TStringList.Create;
+    FImplUsedUnits := TStringList.Create;
   end;
   Result := True;
   if Assigned(FMainUsedUnits) then begin
@@ -322,7 +372,7 @@ begin
       s := '';
     if (ProjFile <> Project1.MainUnitInfo) and (s <> '') then
       if not FMainUsedUnits.Find(s, x) then
-        FProjUnits.Add(s);
+        FProjUnits.AddObject(s, ProjFile);
     ProjFile := ProjFile.NextPartOfProject;
   end;
   FProjUnits.Sorted := True;
@@ -387,6 +437,27 @@ begin
       Result := '';
 end;
 
+function TUseUnitDialog.SelectedUnitFileName: string;
+var
+  CodeBuf: TCodeBuffer;
+  AObj: TObject;
+begin
+  Result := '';
+  if UnitsListBox.ItemIndex < 0 then
+    Exit;
+  AObj := UnitsListBox.Items.Objects[UnitsListBox.ItemIndex];
+  if AObj is TIdentifierListItem then
+  begin
+    CodeBuf := CodeToolBoss.FindUnitSource(SourceEditorManager.ActiveEditor.CodeBuffer, TIdentifierListItem(AObj).Identifier, '');
+    if Assigned(CodeBuf) then
+      Result := CodeBuf.Filename;
+  end else
+  if AObj is TUnitInfo then
+  begin
+    Result := TUnitInfo(AObj).Filename;
+  end;
+end;
+
 function TUseUnitDialog.InterfaceSelected: Boolean;
 begin
   Result:=SectionRadioGroup.ItemIndex=0;
@@ -422,9 +493,15 @@ begin
     curUnit := FProjUnits[i];
     if  not FMainUsedUnits.Find(curUnit, x)
     and not FImplUsedUnits.Find(curUnit, x) then
-      FilterEdit.Items.Add(FProjUnits[i]);
+      FilterEdit.Items.AddObject(FProjUnits[i], FProjUnits.Objects[i]);
   end;
   FilterEdit.InvalidateFilter;
+end;
+
+procedure TUseUnitDialog.FilterEditAfterFilter(Sender: TObject);
+begin
+  if (UnitsListBox.Count > 0) and (UnitsListBox.ItemIndex = -1) then
+    UnitsListBox.ItemIndex := 0;
 end;
 
 end.

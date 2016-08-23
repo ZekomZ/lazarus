@@ -272,7 +272,13 @@ end;
 procedure TCustomSpeedButton.RealSetText(const Value: TCaption);
 begin
   if Caption = Value then Exit;
-  inherited RealSetText(Value);
+  if (Parent<>nil) and (Parent.HandleAllocated) and (not (csLoading in ComponentState)) then
+  begin
+    InvalidatePreferredSize;
+    inherited RealSetText(Value);
+    AdjustSize;
+  end else
+    inherited RealSetText(Value);
   
   Invalidate;
 end;
@@ -1003,26 +1009,25 @@ end;
 function TCustomSpeedButton.GetTextSize(Drawing: boolean; PaintRect: TRect): TSize;
 var
   TMP: String;
-  TXTStyle: TTextStyle;
   Flags: Cardinal;
+  DC: HDC;           // ~bk see : TCustomLabel.CalculateSize
+  OldFont: HGDIOBJ;  //               "
 begin
   if FShowCaption and (Caption <> '') then
   begin
     TMP := Caption;
-    TXTStyle := Canvas.TextStyle;
-    TXTStyle.Opaque := False;
-    TXTStyle.Clipping := True;
-    TXTStyle.ShowPrefix := ShowAccelChar;
-    TXTStyle.Alignment := taLeftJustify;
-    TXTStyle.Layout := tlTop;
-    TXTStyle.RightToLeft := UseRightToLeftReading;
-    TXTStyle.SystemFont := Canvas.Font.IsDefault;//Match System Default Style
     DeleteAmpersands(TMP);
-
     Flags := DT_CalcRect;
-    if not TXTStyle.SingleLine then Inc(Flags, DT_WordBreak);
-
-    DrawText(Canvas.Handle, PChar(TMP), Length(TMP), PaintRect, Flags);
+    if not Canvas.TextStyle.SingleLine then
+      Inc(Flags, DT_WordBreak);
+    DC := GetDC(Parent.Handle);
+    try
+      OldFont := SelectObject(DC, HGDIOBJ(Font.Reference.Handle));
+      DrawText(DC, PChar(TMP), Length(TMP), PaintRect, Flags);
+      SelectObject(DC, OldFont);
+    finally
+      ReleaseDC(Parent.Handle, DC);
+    end;
     Result.CY := PaintRect.Bottom - PaintRect.Top;
     Result.CX := PaintRect.Right - PaintRect.Left;
   end
@@ -1046,12 +1051,7 @@ function TCustomSpeedButton.DrawGlyph(ACanvas: TCanvas; const AClient: TRect;
   BiDiFlags: Longint): TRect;
 begin
   if Assigned(FGlyph) then
-  begin
-    if (AState = bsDown) or (Down = true) then
-      Result := FGlyph.Draw(ACanvas, AClient, point(AOffset.x + 1, AOffset.y + 1), AState, ATransparent, BiDiFlags)
-    else
-      Result := FGlyph.Draw(ACanvas, AClient, AOffset, AState, ATransparent, BiDiFlags);
-  end
+    Result := FGlyph.Draw(ACanvas, AClient, AOffset, AState, ATransparent, BiDiFlags)
   else
     Result := Rect(0,0,0,0);
 end;

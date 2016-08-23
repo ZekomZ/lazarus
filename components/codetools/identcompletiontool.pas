@@ -52,7 +52,7 @@ uses
   CodeTree, CodeAtom, CodeCache, CustomCodeTool, CodeToolsStrConsts,
   KeywordFuncLists, BasicCodeTools, LinkScanner, AvgLvlTree, AVL_Tree,
   SourceChanger, FindDeclarationTool, PascalReaderTool, PascalParserTool,
-  CodeToolsStructs, ExprEval, LazDbgLog;
+  CodeToolsStructs, ExprEval, LazDbgLog, crc;
   
 type
   TIdentCompletionTool = class;
@@ -100,7 +100,8 @@ type
     iliIsUnimplemented,
     iliIsLibrary,
     iliAtCursor, // the item is the identifier at the completion
-    iliNeedsAmpersand //the item has to be prefixed with '&'
+    iliNeedsAmpersand, //the item has to be prefixed with '&'
+    iliHasLowerVisibility
     );
   TIdentListItemFlags = set of TIdentListItemFlag;
   
@@ -113,6 +114,8 @@ type
     function CalcMemSize: PtrUInt;
   end;
 
+  TIdentifierList = class;
+
   { TIdentifierListItem }
 
   TIdentifierListItem = class
@@ -124,7 +127,7 @@ type
     FToolNodesDeletedStep: integer;// only valid if iliNodeValid
     FNodeStartPos: integer;
     FNodeDesc: TCodeTreeNodeDesc;
-    FNodeHash: string;
+    FNodeHash: Cardinal;
     function GetNode: TCodeTreeNode;
     function GetParamTypeList: string;
     function GetParamNameList: string;
@@ -142,6 +145,7 @@ type
     Flags: TIdentListItemFlags;
     BaseExprType: TExpressionType;
     function AsString: string;
+    procedure BeautifyIdentifier({%H-}IdentList: TIdentifierList); virtual;
     function GetDesc: TCodeTreeNodeDesc;
     constructor Create(NewCompatibility: TIdentifierCompatibility;
                        NewHasChilds: boolean; NewHistoryIndex: integer;
@@ -166,16 +170,33 @@ type
     procedure UnbindNode;
     procedure StoreNodeHash;
     function RestoreNode: boolean;
-    function GetNodeHash(ANode: TCodeTreeNode): string;
+    function GetNodeHash(ANode: TCodeTreeNode): Cardinal;
     function CompareParamList(CompareItem: TIdentifierListItem): integer;
     function CompareParamList(CompareItem: TIdentifierListSearchItem): integer;
-    function CalcMemSize: PtrUInt;
+    function CalcMemSize: PtrUInt; virtual;
   public
     property ParamTypeList: string read GetParamTypeList write SetParamTypeList;
     property ParamNameList: string read GetParamNameList write SetParamNameList;
     property ResultType: string read FResultType write SetResultType;
     property Node: TCodeTreeNode read GetNode write SetNode;
   end;
+  TIdentifierListItemClass = class of TIdentifierListItem;
+
+  TUnitNameSpaceIdentifierListItem = class(TIdentifierListItem)
+  public
+    FileUnitName: string;
+    IdentifierStartInUnitName: Integer;
+
+    constructor Create(NewCompatibility: TIdentifierCompatibility;
+                       NewHasChilds: boolean; NewHistoryIndex: integer;
+                       NewIdentifier: PChar; NewLevel: integer;
+                       NewNode: TCodeTreeNode; NewTool: TFindDeclarationTool;
+                       NewDefaultDesc: TCodeTreeNodeDesc;
+                       NewFileUnitName: PChar;
+                       NewIdentifierStartInUnitName: Integer);
+    function CalcMemSize: PtrUInt; override;
+  end;
+  TUnitNameSpaceIdentifierListItemClass = class of TUnitNameSpaceIdentifierListItem;
   
   TIdentifierListFlag = (
     ilfFilteredListNeedsUpdate,
@@ -195,7 +216,7 @@ type
     ilcfIsExpression,      // is expression part of statement. e.g. 'if expr'
     ilcfCanProcDeclaration,// context allows one to declare a procedure/method
     ilcfEndOfLine,         // atom at end of line
-    ilcfDontAllowProcedures// context doesn't allow procedures (e.g. in function parameter, after assignment or other operator, in if codition etc.)
+    ilcfDontAllowProcedures// context doesn't allow procedures (e.g. in function parameter, after other operator, in if codition etc. - Delphi mode supports assignment of procedures!)
     );
   TIdentifierListContextFlags = set of TIdentifierListContextFlag;
   
@@ -360,6 +381,9 @@ type
                                     // property names in source)
     FIDTFoundMethods: TAVLTree;// tree of TCodeTreeNodeExtension Txt=clean text
     FIDTTreeOfUnitFiles: TAVLTree;// tree of TUnitFileInfo
+    FIDTTreeOfUnitFiles_NamespacePath: string;
+    FIDTTreeOfUnitFiles_CaseInsensitive: Boolean;
+    FIDTTreeOfNamespaces: TAVLTree;// tree of TNameSpaceInfo
     procedure AddToTreeOfUnitFileInfo(const AFilename: string);
     procedure AddBaseConstant(const BaseName: PChar);
     procedure AddBaseType(const BaseName: PChar);
@@ -376,7 +400,7 @@ type
       const Context, GatherContext: TFindContext);
     procedure GatherUsefulIdentifiers(CleanPos: integer;
       const Context, GatherContext: TFindContext);
-    procedure GatherUnitnames;
+    procedure GatherUnitnames(const NameSpacePath: string = '');
     procedure GatherSourceNames(const Context: TFindContext);
     procedure GatherContextKeywords(const Context: TFindContext;
       CleanPos: integer; BeautifyCodeOptions: TBeautifyCodeOptions);
@@ -390,7 +414,7 @@ type
     procedure FindCollectionContext(Params: TFindDeclarationParams;
       IdentStartPos: integer; CursorNode: TCodeTreeNode;
       out ExprType: TExpressionType; out ContextExprStartPos: LongInt;
-      out StartInSubContext: Boolean);
+      out StartInSubContext, HasInheritedKeyword: Boolean);
     function CollectAllContexts(Params: TFindDeclarationParams;
       const FoundContext: TFindContext): TIdentifierFoundResult;
     procedure AddCollectionContext(Tool: TFindDeclarationTool;
@@ -417,6 +441,10 @@ type
 function dbgs(Flag: TIdentifierListContextFlag): string; overload;
 function dbgs(Flags: TIdentifierListContextFlags): string; overload;
   
+var
+  CIdentifierListItem: TIdentifierListItemClass = TIdentifierListItem;
+  CUnitNameSpaceIdentifierListItem: TUnitNameSpaceIdentifierListItemClass = TUnitNameSpaceIdentifierListItem;
+
 implementation
 
 const
@@ -501,6 +529,27 @@ begin
       Result+=dbgs(f);
     end;
   Result:='['+Result+']';
+end;
+
+{ TUnitNameSpaceIdentifierListItem }
+
+constructor TUnitNameSpaceIdentifierListItem.Create(
+  NewCompatibility: TIdentifierCompatibility; NewHasChilds: boolean;
+  NewHistoryIndex: integer; NewIdentifier: PChar; NewLevel: integer;
+  NewNode: TCodeTreeNode; NewTool: TFindDeclarationTool;
+  NewDefaultDesc: TCodeTreeNodeDesc; NewFileUnitName: PChar;
+  NewIdentifierStartInUnitName: Integer);
+begin
+  inherited Create(NewCompatibility, NewHasChilds, NewHistoryIndex,
+                   NewIdentifier, NewLevel, NewNode, NewTool, NewDefaultDesc);
+  FileUnitName := NewFileUnitName;
+  IdentifierStartInUnitName := NewIdentifierStartInUnitName;
+end;
+
+function TUnitNameSpaceIdentifierListItem.CalcMemSize: PtrUInt;
+begin
+  Result := inherited CalcMemSize
+    +MemSizeString(FileUnitName);
 end;
 
 { TIdentifierList }
@@ -905,7 +954,8 @@ end;
 
 procedure TIdentCompletionTool.AddToTreeOfUnitFileInfo(const AFilename: string);
 begin
-  AddToTreeOfUnitFiles(FIDTTreeOfUnitFiles,AFilename,false);
+  AddToTreeOfUnitFilesOrNamespaces(FIDTTreeOfUnitFiles,FIDTTreeOfNamespaces,
+    FIDTTreeOfUnitFiles_NamespacePath,AFilename,FIDTTreeOfUnitFiles_CaseInsensitive,false);
 end;
 
 procedure TIdentCompletionTool.AddCompilerProcedure(const AProcName, AParameterList: PChar);
@@ -915,7 +965,7 @@ begin
   //DebugLn(['AddCompilerProcedure ',AProcName,' ',ilcfStartOfStatement in CurrentIdentifierList.ContextFlags]);
   if (ilcfDontAllowProcedures in CurrentIdentifierList.ContextFlags) then exit;
 
-  NewItem:=TIdentifierListItem.Create(
+  NewItem:=CIdentifierListItem.Create(
       icompUnknown,
       false,
       CompilerFuncHistoryIndex,
@@ -934,7 +984,7 @@ procedure TIdentCompletionTool.AddKeyWord(aKeyWord: string);
 var
   NewItem: TIdentifierListItem;
 begin
-  NewItem:=TIdentifierListItem.Create(
+  NewItem:=CIdentifierListItem.Create(
       icompExact,false,0,
       CurrentIdentifierList.CreateIdentifier(aKeyWord),
       1000,nil,nil,ctnNone);
@@ -947,7 +997,7 @@ procedure TIdentCompletionTool.AddCompilerFunction(const AProcName, AParameterLi
 var
   NewItem: TIdentifierListItem;
 begin
-  NewItem:=TIdentifierListItem.Create(
+  NewItem:=CIdentifierListItem.Create(
       icompUnknown,
       false,
       CompilerFuncHistoryIndex,
@@ -968,7 +1018,7 @@ procedure TIdentCompletionTool.AddBaseType(const BaseName: PChar);
 var
   NewItem: TIdentifierListItem;
 begin
-  NewItem:=TIdentifierListItem.Create(
+  NewItem:=CIdentifierListItem.Create(
       icompUnknown,
       false,
       CompilerFuncHistoryIndex,
@@ -984,7 +1034,7 @@ procedure TIdentCompletionTool.AddBaseConstant(const BaseName: PChar);
 var
   NewItem: TIdentifierListItem;
 begin
-  NewItem:=TIdentifierListItem.Create(
+  NewItem:=CIdentifierListItem.Create(
       icompUnknown,
       false,
       CompilerFuncHistoryIndex,
@@ -1060,6 +1110,7 @@ var
   ProtectedForeignClass: Boolean;
   Lvl: LongInt;
   NamePos: TAtomPosition;
+  HasLowerVisibility: Boolean;
 begin
   // proceed searching ...
   Result:=ifrProceedSearch;
@@ -1079,6 +1130,7 @@ begin
   end;
 
   Lvl:=FLastGatheredIdentLevel;
+  HasLowerVisibility:=False;
 
   ProtectedForeignClass:=false;
   if FoundContext.Tool=Self then begin
@@ -1103,14 +1155,16 @@ begin
       //debugln(['TIdentCompletionTool.CollectAllIdentifiers Node=',Node.DescAsString,' Context=',CurrentIdentifierList.Context.Node.DescAsString,' CtxVis=',NodeDescToStr(CurrentIdentifierList.NewMemberVisibility)]);
       if (CurrentIdentifierList.NewMemberVisibility<>ctnNone)
       and (CurrentIdentifierList.NewMemberVisibility<Node.Desc)
-      and (CurrentIdentifierList.Context.Node.Desc
+      and (FoundContext.Node.Desc
         in ([ctnProcedure,ctnProcedureHead,ctnProperty]+AllClassSections))
       then begin
         // the user wants to override a method or property
         // => ignore all with a higher visibility, because fpc does not allow
         //    to downgrade the visibility and will give a hint when trying
+        //---- No, allow visibility downgrading to reduce confusion tha CodeTools do not list those functions.
+        //---- FPC actually allows it although it shows a warning
         //debugln(['TIdentCompletionTool.CollectAllIdentifiers skipping member, because it would downgrade: ',dbgstr(FoundContext.Tool.ExtractNode(FoundContext.Node,[]),1,30)]);
-        exit;
+        HasLowerVisibility:=True;
       end;
       case Node.Desc of
       ctnClassPrivate:
@@ -1166,6 +1220,9 @@ begin
         end;
       end;
     end;
+
+  ctnGenericParameter:
+    Ident:=@FoundContext.Tool.Src[FoundContext.Node.StartPos];
   
   ctnVarDefinition,ctnConstDefinition,ctnEnumIdentifier,ctnLabel,ctnGlobalProperty:
     Ident:=@FoundContext.Tool.Src[FoundContext.Node.StartPos];
@@ -1225,7 +1282,7 @@ begin
   ctnRecordCase:
     Ident:=@FoundContext.Tool.Src[Params.NewCleanPos];
 
-  ctnUseUnit:
+  ctnUseUnitNamespace,ctnUseUnitClearName:
     if (FoundContext.Tool=Self) then begin
       Ident:=@Src[FoundContext.Node.StartPos];
     end;
@@ -1238,7 +1295,7 @@ begin
   end;
   if Ident=nil then exit;
 
-  NewItem:=TIdentifierListItem.Create(
+  NewItem:=CIdentifierListItem.Create(
                             icompUnknown,
                             false,
                             0,
@@ -1252,10 +1309,13 @@ begin
   if (Ident^='&') and (IsIdentStartChar[Ident[1]]) then
     Include(NewItem.Flags,iliNeedsAmpersand);
 
-  if (FoundContext.Node=CurrentIdentifierList.StartContext.Node) then begin
-    // found identifier is in cursor node
+  // found identifier is in cursor node
+  if (FoundContext.Node=CurrentIdentifierList.StartContext.Node) then
     Include(NewItem.Flags,iliAtCursor);
-  end;
+
+  // method has lower visibility
+  if HasLowerVisibility then
+    Include(NewItem.Flags,iliHasLowerVisibility);
 
   {$IFDEF ShowFoundIdents}
   if FoundContext.Tool=Self then
@@ -1287,7 +1347,7 @@ procedure TIdentCompletionTool.GatherPredefinedIdentifiers(CleanPos: integer;
   var
     NewItem: TIdentifierListItem;
   begin
-    NewItem:=TIdentifierListItem.Create(
+    NewItem:=CUnitNameSpaceIdentifierListItem.Create(
         icompUnknown,
         false,
         CompilerFuncHistoryIndex,
@@ -1295,7 +1355,9 @@ procedure TIdentCompletionTool.GatherPredefinedIdentifiers(CleanPos: integer;
         CompilerFuncLevel,
         nil,
         nil,
-        ctnUseUnit);
+        ctnUseUnitClearName,
+        AnUnitName,
+        1);
     CurrentIdentifierList.Add(NewItem);
   end;
 
@@ -1327,8 +1389,17 @@ begin
     AddCompilerProcedure('Break','');
     AddCompilerFunction('Concat','S1:String;S2:String[...;Sn:String]', 'String');
     AddCompilerProcedure('Continue','');
-    AddCompilerFunction('Copy','const S:String;FromPosition,Count:Integer', 'String');
+    if StrToIntDef(Scanner.Values['FPC_FULLVERSION'],0)>=30100 then // FromPosition and Count parameters are optional
+      AddCompilerFunction('Copy','const S:StringOrArray[;FromPosition,Count:Integer]', 'String')
+    else
+      AddCompilerFunction('Copy','const S:StringOrArray;FromPosition,Count:Integer', 'String');
     AddCompilerProcedure('Dec','var X:Ordinal;N:Integer=1');
+    AddCompilerFunction('Default','T:Type','const');
+    if StrToIntDef(Scanner.Values['FPC_FULLVERSION'],0)>=30100 then //Delete and Insert are available as intrinsic since FPC 3.1
+    begin
+      AddCompilerProcedure('Delete','var S:string;Index,Count:Integer');
+      AddCompilerProcedure('Insert','const Source:string;var Dest:string;Index:Integer');
+    end;
     AddCompilerProcedure('Dispose','var X:Pointer');
     AddCompilerProcedure('Exclude','var S:Set;X:Ordinal');
     AddCompilerProcedure('Exit','');
@@ -1377,7 +1448,7 @@ begin
     and Context.Tool.NodeIsInAMethod(Context.Node)
     and (not CurrentIdentifierList.HasIdentifier('Self','')) then begin
       // method body -> add 'Self'
-      NewItem:=TIdentifierListItem.Create(
+      NewItem:=CIdentifierListItem.Create(
           icompUnknown,
           true,
           1,
@@ -1393,7 +1464,7 @@ begin
     and Context.Tool.NodeIsFunction(ProcNode)
     and (not CurrentIdentifierList.HasIdentifier('Result','')) then begin
       // function body -> add 'Result'
-      NewItem:=TIdentifierListItem.Create(
+      NewItem:=CIdentifierListItem.Create(
           icompUnknown,
           true,
           1,
@@ -1447,7 +1518,7 @@ procedure TIdentCompletionTool.GatherUsefulIdentifiers(CleanPos: integer;
   var
     NewItem: TIdentifierListItem;
   begin
-    NewItem:=TIdentifierListItem.Create(
+    NewItem:=CIdentifierListItem.Create(
         icompExact,true,0,
         CurrentIdentifierList.CreateIdentifier(ProcName),
         0,nil,nil,ctnProcedure);
@@ -1486,7 +1557,7 @@ begin
   end;
 end;
 
-procedure TIdentCompletionTool.GatherUnitnames;
+procedure TIdentCompletionTool.GatherUnitnames(const NameSpacePath: string);
 
   procedure GatherUnitsFromSet;
   begin
@@ -1499,10 +1570,11 @@ var
   BaseDir: String;
   ANode: TAVLTreeNode;
   UnitFileInfo: TUnitFileInfo;
-  NewItem: TIdentifierListItem;
+  NewItem: TUnitNameSpaceIdentifierListItem;
   UnitExt: String;
   SrcExt: String;
   CurSourceName: String;
+  NameSpaceInfo: TNameSpaceInfo;
 begin
   UnitPath:='';
   SrcPath:='';
@@ -1510,37 +1582,60 @@ begin
   //DebugLn('TIdentCompletionTool.GatherUnitnames UnitPath="',UnitPath,'" SrcPath="',SrcPath,'"');
   BaseDir:=ExtractFilePath(MainFilename);
   FIDTTreeOfUnitFiles:=nil;
+  FIDTTreeOfNamespaces:=nil;
   try
     // search in unitpath
+    FIDTTreeOfUnitFiles_CaseInsensitive := true;
+    FIDTTreeOfUnitFiles_NamespacePath := NameSpacePath;
     UnitExt:='pp;pas;ppu';
     if Scanner.CompilerMode=cmMacPas then
       UnitExt:=UnitExt+';p';
-    GatherUnitFiles(BaseDir,UnitPath,UnitExt,false,true,FIDTTreeOfUnitFiles);
+    GatherUnitFiles(BaseDir,UnitPath,UnitExt,NameSpacePath,false,true,FIDTTreeOfUnitFiles, FIDTTreeOfNamespaces);
     // search in srcpath
     SrcExt:='pp;pas';
     if Scanner.CompilerMode=cmMacPas then
       SrcExt:=SrcExt+';p';
-    GatherUnitFiles(BaseDir,SrcPath,SrcExt,false,true,FIDTTreeOfUnitFiles);
+    GatherUnitFiles(BaseDir,SrcPath,SrcExt,NameSpacePath,false,true,FIDTTreeOfUnitFiles, FIDTTreeOfNamespaces);
     // add unitlinks
     GatherUnitsFromSet;
     // create list
     CurSourceName:=GetSourceName;
-    ANode:=FIDTTreeOfUnitFiles.FindLowest;
-    while ANode<>nil do begin
-      UnitFileInfo:=TUnitFileInfo(ANode.Data);
-      if CompareIdentifiers(PChar(Pointer(UnitFileInfo.FileUnitName)),
-                            PChar(Pointer(CurSourceName)))<>0
-      then begin
-        NewItem:=TIdentifierListItem.Create(
-            icompCompatible,true,0,
-            CurrentIdentifierList.CreateIdentifier(UnitFileInfo.FileUnitName),
-            0,nil,nil,ctnUnit);
-        CurrentIdentifierList.Add(NewItem);
+    if FIDTTreeOfUnitFiles<> nil then
+    begin
+      ANode:=FIDTTreeOfUnitFiles.FindLowest;
+      while ANode<>nil do begin
+        UnitFileInfo:=TUnitFileInfo(ANode.Data);
+        if CompareText(PChar(Pointer(UnitFileInfo.FileUnitName)), Length(UnitFileInfo.FileUnitName),
+                       PChar(Pointer(CurSourceName)), Length(CurSourceName), False)<>0
+        then begin
+          NewItem:=CUnitNameSpaceIdentifierListItem.Create(
+              icompCompatible,true,0,
+              CurrentIdentifierList.CreateIdentifier(UnitFileInfo.FileUnitNameWithoutNamespace),
+              0,nil,nil,ctnUnit, PChar(UnitFileInfo.FileUnitName), UnitFileInfo.IdentifierStartInUnitName);
+          if NewItem.IdentifierStartInUnitName < 1 then
+            NewItem.IdentifierStartInUnitName := 1;
+          CurrentIdentifierList.Add(NewItem);
+        end;
+        ANode:=FIDTTreeOfUnitFiles.FindSuccessor(ANode);
       end;
-      ANode:=FIDTTreeOfUnitFiles.FindSuccessor(ANode);
+    end;
+    if FIDTTreeOfNamespaces<>nil then
+    begin
+      ANode:=FIDTTreeOfNamespaces.FindLowest;
+      while ANode<>nil do begin
+        NameSpaceInfo:=TNameSpaceInfo(ANode.Data);
+        NewItem:=CUnitNameSpaceIdentifierListItem.Create(
+            icompCompatible,true,0,
+            CurrentIdentifierList.CreateIdentifier(NameSpaceInfo.NameSpace),
+            0,nil,nil,ctnUseUnitNamespace, PChar(NameSpaceInfo.UnitName),
+            NameSpaceInfo.IdentifierStartInUnitName);
+        CurrentIdentifierList.Add(NewItem);
+        ANode:=FIDTTreeOfNamespaces.FindSuccessor(ANode);
+      end;
     end;
   finally
     FreeTreeOfUnitFiles(FIDTTreeOfUnitFiles);
+    FreeTreeOfUnitFiles(FIDTTreeOfNamespaces);
   end;
 end;
 
@@ -1550,7 +1645,7 @@ procedure TIdentCompletionTool.GatherSourceNames(const Context: TFindContext);
   var
     NewItem: TIdentifierListItem;
   begin
-    NewItem:=TIdentifierListItem.Create(
+    NewItem:=CIdentifierListItem.Create(
         icompExact,true,0,
         CurrentIdentifierList.CreateIdentifier(SrcName),
         0,nil,nil,Context.Node.Desc);
@@ -1596,7 +1691,7 @@ type
     NewItem: TIdentifierListItem;
   begin
     KeyWord:=BeautifyCodeOptions.BeautifyKeyWord(Keyword);
-    NewItem:=TIdentifierListItem.Create(
+    NewItem:=CIdentifierListItem.Create(
         icompExact,false,0,
         CurrentIdentifierList.CreateIdentifier(Keyword),
         1000,nil,nil,ctnNone);
@@ -1673,12 +1768,28 @@ type
       Add(IsKeyWordMethodSpecifier.GetItem(i).KeyWord+';');
   end;
 
+  procedure AddProcSpecifiers;
+  var
+    i: Integer;
+  begin
+    for i:=0 to IsKeyWordProcedureSpecifier.Count-1 do
+      Add(IsKeyWordProcedureSpecifier.GetItem(i).KeyWord+';');
+  end;
+
+  procedure AddProcTypeSpecifiers;
+  var
+    i: Integer;
+  begin
+    for i:=0 to IsKeyWordProcedureTypeSpecifier.Count-1 do
+      Add(IsKeyWordProcedureTypeSpecifier.GetItem(i).KeyWord+';');
+  end;
+
 var
   Node: TCodeTreeNode;
   SubNode: TCodeTreeNode;
   NodeInFront: TCodeTreeNode;
   p: Integer;
-  NodeBehind: TCodeTreeNode;
+  NodeBehind, LastChild: TCodeTreeNode;
 begin
   try
     Node:=Context.Node;
@@ -1718,18 +1829,15 @@ begin
         if (Node.Desc=ctnRecordType) or (Node.Parent.Desc=ctnRecordType) then begin
           Add('case');
         end;
-        if (Node.LastChild<>nil) and (CleanPos>Node.LastChild.StartPos)
-        and (Node.LastChild.EndPos>Node.LastChild.StartPos)
-        and (Node.LastChild.EndPos<Srclen) then begin
+        LastChild:=Node.LastChild;
+        if (LastChild<>nil) and (CleanPos>LastChild.StartPos)
+        and (LastChild.EndPos>LastChild.StartPos)
+        and (LastChild.EndPos<Srclen) then begin
           //debugln(['TIdentCompletionTool.GatherContextKeywords end of class section ',dbgstr(copy(Src,Node.LastChild.EndPos-10,10))]);
-          SubNode:=Node.LastChild;
+          SubNode:=LastChild;
           if SubNode.Desc=ctnProperty then begin
             CheckProperty(SubNode);
           end;
-        end;
-        if NodeInFront<>nil then begin
-          if NodeInFront.Desc=ctnProcedure then
-            AddMethodSpecifiers;
         end;
       end;
 
@@ -1837,6 +1945,25 @@ begin
     ctnProperty:
       CheckProperty(Node);
 
+    end;
+
+    if NodeInFront<>nil then begin
+      if NodeInFront.Desc=ctnProcedureHead then begin
+        // procedure head postfix modifiers
+        //debugln(['TIdentCompletionTool.GatherContextKeywords NodeInFront.Parent=',NodeInFront.Parent.DescAsString]);
+        if NodeInFront.Parent.Desc=ctnProcedure then begin
+          //debugln(['TIdentCompletionTool.GatherContextKeywords NodeInFront.Parent.Parent=',NodeInFront.Parent.Parent.DescAsString]);
+          case NodeInFront.Parent.Parent.Desc of
+          ctnClass,ctnObject,ctnObjCCategory,ctnObjCClass,
+          ctnClassHelper, ctnRecordHelper, ctnTypeHelper,
+          ctnClassPrivate,ctnClassProtected,ctnClassPublic,ctnClassPublished:
+            AddMethodSpecifiers;
+          else
+            AddProcSpecifiers;
+          end;
+        end else if NodeInFront.Parent.Desc=ctnProcedureType then
+          AddProcTypeSpecifiers;
+      end;
     end;
   except
     // ignore parser errors
@@ -1958,18 +2085,18 @@ end;
 
 procedure TIdentCompletionTool.FindCollectionContext(
   Params: TFindDeclarationParams; IdentStartPos: integer;
-  CursorNode: TCodeTreeNode;
-  out ExprType: TExpressionType;
-  out ContextExprStartPos: LongInt;
-  out StartInSubContext: Boolean);
+  CursorNode: TCodeTreeNode; out ExprType: TExpressionType; out
+  ContextExprStartPos: LongInt; out StartInSubContext,
+  HasInheritedKeyword: Boolean);
 
   function GetContextExprStartPos(IdentStartPos: integer;
     ContextNode: TCodeTreeNode): integer;
   begin
     MoveCursorToCleanPos(IdentStartPos);
     ReadPriorAtom;
+    HasInheritedKeyword := UpAtomIs('INHERITED');
     if (CurPos.Flag=cafPoint)
-    or UpAtomIs('INHERITED') then begin
+    or HasInheritedKeyword then begin
       Result:=FindStartOfTerm(IdentStartPos,NodeTermInType(ContextNode));
       if Result<ContextNode.StartPos then
         Result:=ContextNode.StartPos;
@@ -2324,6 +2451,7 @@ begin
           AddKeyWord('FPCVersion');
           AddKeyWord('Time');
           AddKeyWord('CurrentRoutine'); // since FPC 3.1+
+          AddKeyWord('Line'); // since FPC 3.1+
         end else if (Directive='codepage') then begin
           // see fpcsrc/compiler/widestr.pas
           AddKeyWord('UTF8');
@@ -2488,8 +2616,9 @@ var
   StartPosOfVariable: LongInt;
   CursorContext: TFindContext;
   IdentStartXY: TCodeXYPosition;
-  InFrontOfDirective: Boolean;
+  InFrontOfDirective, HasInheritedKeyword: Boolean;
   ExprType: TExpressionType;
+  IdentifierPath: string;
   
   procedure CheckProcedureDeclarationContext;
   var
@@ -2551,6 +2680,18 @@ begin
         CurrentIdentifierList.StartAtom:=CurPos;
       end;
 
+      MoveCursorToCleanPos(IdentStartPos);
+      ReadPriorAtom;
+      IdentifierPath := '';
+      while CurPos.Flag = cafPoint do
+      begin
+        ReadPriorAtom;
+        if CurPos.Flag <> cafWord then
+          Break;
+        IdentifierPath := GetUpAtom + '.' + IdentifierPath;
+        ReadPriorAtom;
+      end;
+
       // find context
       {$IFDEF CTDEBUG}
       DebugLn('TIdentCompletionTool.GatherIdentifiers B',
@@ -2560,8 +2701,8 @@ begin
       {$ENDIF}
       GatherContext:=CreateFindContext(Self,CursorNode);
       CurrentIdentifierList.NewMemberVisibility:=GetClassVisibility(CursorNode);
-      if CursorNode.Desc in [ctnUsesSection,ctnUseUnit] then begin
-        GatherUnitNames;
+      if CursorNode.Desc in [ctnUsesSection,ctnUseUnit,ctnUseUnitNamespace,ctnUseUnitClearName] then begin
+        GatherUnitNames(IdentifierPath);
         MoveCursorToCleanPos(IdentEndPos);
         ReadNextAtom;
         if (CurPos.Flag=cafWord) and (not UpAtomIs('IN')) then begin
@@ -2574,12 +2715,15 @@ begin
         GatherSourceNames(GatherContext);
       end else begin
         FindCollectionContext(Params,IdentStartPos,CursorNode,
-                             ExprType,ContextExprStartPos,StartInSubContext);
+                             ExprType,ContextExprStartPos,StartInSubContext,
+                             HasInheritedKeyword);
         //debugln(['TIdentCompletionTool.GatherIdentifiers FindCollectionContext ',ExprTypeToString(ExprType)]);
 
         GatherContext := ExprType.Context;
+        if GatherContext.Node<>nil then
+          DebugLn('%d:%d', [GatherContext.Node.StartPos, GatherContext.Node.EndPos]);
         // find class and ancestors if existing (needed for protected identifiers)
-        if GatherContext.Tool = Self then
+        if (GatherContext.Tool = Self) or HasInheritedKeyword then
         begin
           FindContextClassAndAncestorsAndExtendedClassOfHelper(IdentStartXY, FICTClassAndAncestorsAndExtClassOfHelper);
         end;
@@ -2637,7 +2781,9 @@ begin
                 CurrentIdentifierList.ContextFlags+[ilcfIsExpression, ilcfDontAllowProcedures];
             end;
             // check if procedure is allowed
-            if CurPos.Flag in [cafComma, cafRoundBracketOpen, cafEdgedBracketOpen, cafEqual, cafOtherOperator] then
+            if (CurPos.Flag in [cafComma, cafRoundBracketOpen, cafEdgedBracketOpen, cafEqual, cafOtherOperator])
+            or ((Scanner.CompilerMode<>cmDelphi) and (CurPos.Flag = cafAssignment)) // "MyEvent := MyProc;" is supported only in Delphi mode
+            then
               CurrentIdentifierList.ContextFlags:=
                 CurrentIdentifierList.ContextFlags+[ilcfDontAllowProcedures];
           end;
@@ -2804,28 +2950,48 @@ var
       Item.Params.DelimitedText:=Params;
     end;
 
+  var
+    IsPointedSystem: Boolean = False;
   begin
     MoveCursorToAtomPos(ProcNameAtom);
     ReadPriorAtom;
-    if (CurPos.Flag in [cafEnd,cafSemicolon,cafColon,
-      cafRoundBracketOpen,cafEdgedBracketOpen])
+    if (CurPos.Flag = cafPoint) then
+    begin
+      ReadPriorAtom;
+      IsPointedSystem := UpAtomIs('SYSTEM');
+    end;
+    if (CurPos.Flag in [cafEnd,cafSemicolon,cafEqual,cafComma,cafColon,
+      cafRoundBracketOpen,cafEdgedBracketOpen,cafAssignment,cafOtherOperator])
+    or IsPointedSystem
     or UpAtomIs('BEGIN')
     or UpAtomIs('TRY') or UpAtomIs('FINALLY') or UpAtomIs('EXCEPT')
-    or UpAtomIs('REPEAT') or UpAtomIs('ASM') then begin
+    or UpAtomIs('ASM')
+    or UpAtomIs('REPEAT') or UpAtomIs('UNTIL') or UpAtomIs('WHILE') or UpAtomIs('DO')
+    or UpAtomIs('IF') or UpAtomIs('THEN') or UpAtomIs('ELSE')
+    then begin
       // see fpc/compiler/psystem.pp
       AddCompilerProc('Assert','Condition:Boolean;const Message:String');
       AddCompilerProc('Assigned','P:Pointer','Boolean');
       AddCompilerProc('Addr','var X','Pointer');
       AddCompilerProc('BitSizeOf','Identifier','Integer');
       AddCompilerProc('Concat','S1:String;S2:String[...;Sn:String]', 'String');
-      AddCompilerProc('Copy','const S:String;FromPosition,Count:Integer', 'String');
+      if StrToIntDef(Scanner.Values['FPC_FULLVERSION'],0)>=30100 then // FromPosition and Count parameters are optional
+        AddCompilerProc('Copy','const S:StringOrArray[;FromPosition,Count:Integer]', 'String')
+      else
+        AddCompilerProc('Copy','const S:StringOrArray;FromPosition,Count:Integer', 'String');
       AddCompilerProc('Dec','var X:Ordinal;N:Integer=1');
+      AddCompilerProc('Default','T:Type','const');
       AddCompilerProc('Dispose','var X:Pointer');
       AddCompilerProc('Exclude','var S:Set;X:Ordinal');
       AddCompilerProc('Exit','ResultValue:Ordinal=Result');
       AddCompilerProc('Finalize','var X');
       AddCompilerProc('get_frame','','Pointer');
       AddCompilerProc('High','Arg:TypeOrVariable','Ordinal');
+      if StrToIntDef(Scanner.Values['FPC_FULLVERSION'],0)>=30100 then //Delete and Insert are available as intrinsic since FPC 3.1
+      begin
+        AddCompilerProc('Delete','var S:string;Index,Count:Integer');
+        AddCompilerProc('Insert','const Source:string;var Dest:string;Index:Integer');
+      end;
       AddCompilerProc('Inc','var X:Ordinal;N:Integer=1');
       AddCompilerProc('Include','var S:Set;X:Ordinal');
       AddCompilerProc('Initialize','var X');
@@ -2866,7 +3032,7 @@ var
     VarNameAtom, ProcNameAtom: TAtomPosition;
     ParameterIndex: integer;
     ContextExprStartPos: LongInt;
-    StartInSubContext: Boolean;
+    StartInSubContext, HasInheritedKeyword: Boolean;
     ExprType: TExpressionType;
   begin
     Result:=false;
@@ -2907,7 +3073,8 @@ var
       CurrentIdentifierContexts.EndPos:=SrcLen+1;
 
     FindCollectionContext(Params,ProcNameAtom.StartPos,CursorNode,
-                          ExprType,ContextExprStartPos,StartInSubContext);
+                          ExprType,ContextExprStartPos,StartInSubContext,
+                          HasInheritedKeyword);
 
     if ContextExprStartPos=0 then ;
     {$IFDEF VerboseCodeContext}
@@ -3449,6 +3616,8 @@ begin
     RaiseToolMissing;
   if (Tool<>nil) then
     FToolNodesDeletedStep:=Tool.NodesDeletedChangeStep;
+  if (FNode<>nil) then
+    StoreNodeHash;
 end;
 
 procedure TIdentifierListItem.SetParamTypeList(const AValue: string);
@@ -3487,6 +3656,11 @@ begin
   if ANode<>nil then
     Result:=Result+' Node='+ANode.DescAsString
       +' "'+StringToPascalConst(copy(Tool.Src,ANode.StartPos,50))+'"';
+end;
+
+procedure TIdentifierListItem.BeautifyIdentifier(IdentList: TIdentifierList);
+begin
+  // can be overridden
 end;
 
 function TIdentifierListItem.GetDesc: TCodeTreeNodeDesc;
@@ -3796,7 +3970,7 @@ end;
 function TIdentifierListItem.RestoreNode: boolean;
 var
   NewNode: TCodeTreeNode;
-  NewHash: String;
+  NewHash: Cardinal;
 begin
   if not (iliNodeHashValid in Flags) then exit(true);
   //DebugLn(['TIdentifierListItem.RestoreNode ',Identifier]);
@@ -3819,20 +3993,23 @@ begin
   Result:=true;
 end;
 
-function TIdentifierListItem.GetNodeHash(ANode: TCodeTreeNode): string;
+function TIdentifierListItem.GetNodeHash(ANode: TCodeTreeNode): Cardinal;
 var
   StartPos: LongInt;
   EndPos: LongInt;
 begin
   case ANode.Desc of
-  ctnVarDefinition,ctnConstDefinition,ctnTypeDefinition,ctnGenericType:
-    Result:=Tool.ExtractDefinitionName(ANode)
-  else
+    ctnVarDefinition,ctnConstDefinition,ctnTypeDefinition,ctnGenericType:
+      ANode:=Tool.FindDefinitionNameNode(ANode);
+  end;
+  if ANode<>nil then
+  begin
     StartPos:=ANode.StartPos;
     EndPos:=StartPos+20;
     if EndPos>ANode.EndPos then EndPos:=ANode.EndPos;
-    Result:=copy(Tool.Src,StartPos,EndPos);
-  end;
+    Result:=crc32(0, @Tool.Src[StartPos], EndPos-StartPos);
+  end else
+    Result:=0;
 end;
 
 function TIdentifierListItem.CompareParamList(CompareItem: TIdentifierListItem
@@ -3870,7 +4047,7 @@ function TIdentifierListItem.CalcMemSize: PtrUInt;
 begin
   Result:=PtrUInt(InstanceSize)
     +MemSizeString(FParamTypeList)
-    +MemSizeString(FNodeHash)
+    +SizeOf(FNodeHash)
     +MemSizeString(Identifier);
 end;
 

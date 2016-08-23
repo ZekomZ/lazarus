@@ -100,11 +100,55 @@ end;
  ------------------------------------------------------------------------------}
 function TWin32WidgetSet.FontCanUTF8(Font: HFont): boolean;
 begin
-  {$ifdef WindowsUnicodeSupport}
-    Result := True;
-  {$else}
-    Result := False;
-  {$endif}
+  Result := True;
+end;
+
+function EnumFontsCallBack(
+  var LogFont: TEnumLogFontEx;
+  var Metric: TNewTextMetricEx;
+  FontType: Longint;
+  Data: LParam):LongInt; stdcall;
+var
+  L: TStringList;
+  S: String;
+begin
+  L := TStringList(PtrInt(Data));
+  S := LogFont.elfLogFont.lfFaceName;
+  if ((logfont.elfLogFont.lfPitchAndFamily and FIXED_PITCH) = FIXED_PITCH) then
+  begin
+    L.Add(S);
+  end;
+  result := 1;
+end;
+
+
+function TWin32WidgetSet.FontIsMonoSpace(Font: HFont): boolean;
+var
+  LF: LogFontA;
+  Res: LongInt;
+  List: TStringList;
+  FontName: String;
+  DC: HDC;
+begin
+  Result := False;
+  FillChar(LF{%H-}, SizeOf(LogFontA), #0);
+  Res := GetObject(Font, SizeOf(LogFontA),@LF);
+  //writeln('TWin32WidgetSet.FontIsMonoSpace: Res = ',Res,' SizeOf(LogFont) = ',SizeOf(LogFontA));
+  //TWin32WidgetSet.GetObject uses LogFontW and converts back to LogFontA, so Res should be SizeOf(LogFontW)
+  if (Res <> SizeOf(LogFontW)) then
+    Exit;
+  LF.lfCharSet := DEFAULT_CHARSET;
+  LF.lfPitchAndFamily := 0;
+  FontName := LF.lfFaceName;
+  DC := GetDC(0);
+  List := TStringList.Create;
+  try
+    EnumFontFamiliesEX(DC, @LF, @EnumFontsCallback, PtrInt(List), 0);
+    Result := (List.IndexOf(FontName) > -1);
+  finally
+    ReleaseDC(0, DC);
+    List.Free;
+  end;
 end;
 
 procedure TWin32WidgetSet.HandleProcessEvent(AData: PtrInt; AFlags: dword);
@@ -391,8 +435,13 @@ begin
     try
       Result := IDCANCEL;
       TaskDialogIndirect(@TaskConfig, @Result, nil, nil);
-      if (Result = IDCANCEL) and Assigned(Buttons.CancelButton) then
-        Result := Buttons.CancelButton.ModalResult;
+      if (Result = IDCANCEL) then
+      begin
+        if Assigned(Buttons.CancelButton) then
+          Result := Buttons.CancelButton.ModalResult
+        else
+          Result := mrCancel;
+      end;
     finally
       RestoreApplicationState(State);
       for i := 0 to TaskConfig.cButtons - 1 do
@@ -461,13 +510,10 @@ const
     try
       NewBrush := CreatePatternBrush(Win32WidgetSet.DotsPatternBitmap);
       OldBrush := SelectObject(DC, NewBrush);
-      with ARect do
-      begin
-        DrawHorzLine(DC, Left, Right, Top);
-        DrawVertLine(DC, Top + LineSize, Bottom - LineSize, Left);
-        DrawHorzLine(DC, Left, Right, Bottom - LineSize);
-        DrawVertLine(DC, Top + LineSize, Bottom - LineSize, Right - LineSize);
-      end;
+      DrawHorzLine(DC, ARect.Left, ARect.Right, ARect.Top);
+      DrawVertLine(DC, ARect.Top + LineSize, ARect.Bottom - LineSize, ARect.Left);
+      DrawHorzLine(DC, ARect.Left, ARect.Right, ARect.Bottom - LineSize);
+      DrawVertLine(DC, ARect.Top + LineSize, ARect.Bottom - LineSize, ARect.Right - LineSize);
       DeleteObject(SelectObject(DC, OldBrush));
     finally
       ReleaseDC(0, DC);
@@ -586,15 +632,6 @@ begin
     begin
       // win32 combo (but not csSimple) has fixed height
       FixedHeight := TCustomComboBox(SizeConstraints.Control).Style <> csSimple;
-    end
-    // The ProgressBar needs a minimum Height of 10 when themed,
-    // as required by Windows, otherwise it's image is corrupted
-    else if ThemeServices.ThemesEnabled and (SizeConstraints.Control is TCustomProgressBar) then
-    begin
-      MinHeight := 10;
-
-      SizeConstraints.SetInterfaceConstraints(
-        MinWidth, MinHeight, MaxWidth, MaxHeight);
     end;
     
     if (FixedHeight or FixedWidth)

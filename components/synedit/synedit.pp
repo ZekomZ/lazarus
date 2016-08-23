@@ -588,7 +588,9 @@ type
     function GetCharsInWindow: Integer;
     function GetCharWidth: integer;
     function GetDefSelectionMode: TSynSelectionMode;
+    function GetFoldedCodeLineColor: TSynSelectedColor;
     function GetFoldState: String;
+    function GetHiddenCodeLineColor: TSynSelectedColor;
     function GetLeftChar: Integer;
     function GetLineHeight: integer;
     function GetLinesInWindow: Integer;
@@ -606,7 +608,9 @@ type
     procedure SetBracketMatchColor(AValue: TSynSelectedColor);
     procedure SetDefSelectionMode(const AValue: TSynSelectionMode);
     procedure SetFoldedCodeColor(AValue: TSynSelectedColor);
+    procedure SetFoldedCodeLineColor(AValue: TSynSelectedColor);
     procedure SetFoldState(const AValue: String);
+    procedure SetHiddenCodeLineColor(AValue: TSynSelectedColor);
     procedure SetHighlightAllColor(AValue: TSynSelectedColor);
     procedure SetIncrementColor(AValue: TSynSelectedColor);
     procedure SetLineHighlightColor(AValue: TSynSelectedColor);
@@ -974,6 +978,7 @@ type
     function GetHighlighterAttriAtRowColEx(XY: TPoint; out Token: string;
       out TokenType, Start: Integer;
       out Attri: TSynHighlighterAttributes): boolean;                           //L505
+    procedure CaretAtIdentOrString(XY: TPoint; out AtIdent, NearString: Boolean);
     procedure GetWordBoundsAtRowCol(const XY: TPoint; out StartX, EndX: integer);
     function GetWordAtRowCol(XY: TPoint): string;
     function NextTokenPos: TPoint; virtual; deprecated; // use next word pos instead
@@ -1127,6 +1132,8 @@ type
     property MouseLinkColor: TSynSelectedColor read GetMouseLinkColor write SetMouseLinkColor;
     property LineHighlightColor: TSynSelectedColor read GetLineHighlightColor write SetLineHighlightColor;
     property FoldedCodeColor: TSynSelectedColor read GetFoldedCodeColor write SetFoldedCodeColor;
+    property FoldedCodeLineColor: TSynSelectedColor read GetFoldedCodeLineColor write SetFoldedCodeLineColor;
+    property HiddenCodeLineColor: TSynSelectedColor read GetHiddenCodeLineColor write SetHiddenCodeLineColor;
 
     property Beautifier: TSynCustomBeautifier read fBeautifier write SetBeautifier;
     property BookMarkOptions: TSynBookMarkOpt read fBookMarkOpt write fBookMarkOpt;
@@ -1711,9 +1718,19 @@ begin
   Result := FBlockSelection.SelectionMode;
 end;
 
+function TCustomSynEdit.GetFoldedCodeLineColor: TSynSelectedColor;
+begin
+  Result := FFoldedLinesView.MarkupInfoFoldedCodeLine;
+end;
+
 function TCustomSynEdit.GetFoldState: String;
 begin
   Result := FFoldedLinesView.GetFoldDescription(0, 0, -1, -1, True);
+end;
+
+function TCustomSynEdit.GetHiddenCodeLineColor: TSynSelectedColor;
+begin
+  Result := FFoldedLinesView.MarkupInfoHiddenCodeLine;
 end;
 
 function TCustomSynEdit.GetLeftChar: Integer;
@@ -1803,6 +1820,11 @@ end;
 procedure TCustomSynEdit.SetFoldedCodeColor(AValue: TSynSelectedColor);
 begin
   FFoldedLinesView.MarkupInfoFoldedCode.Assign(AValue);
+end;
+
+procedure TCustomSynEdit.SetFoldedCodeLineColor(AValue: TSynSelectedColor);
+begin
+  FFoldedLinesView.MarkupInfoFoldedCodeLine.Assign(AValue);
 end;
 
 procedure TCustomSynEdit.SurrenderPrimarySelection;
@@ -5518,6 +5540,11 @@ begin
   FPendingFoldState := '';
 end;
 
+procedure TCustomSynEdit.SetHiddenCodeLineColor(AValue: TSynSelectedColor);
+begin
+  FFoldedLinesView.MarkupInfoHiddenCodeLine.Assign(AValue);
+end;
+
 procedure TCustomSynEdit.SetHighlightAllColor(AValue: TSynSelectedColor);
 begin
   fMarkupHighAll.MarkupInfo.Assign(AValue);
@@ -6937,9 +6964,15 @@ begin
           DefaultSelectionMode := SEL_MODE[Command];
         end;
       EcFoldLevel1..EcFoldLevel9:
-        FoldAll(Command - EcFoldLevel1);
+        begin
+          FoldAll(Command - EcFoldLevel1);
+          FCaret.Touch;
+        end;
       EcFoldLevel0:
-        UnfoldAll;
+        begin
+          UnfoldAll;
+          FCaret.Touch;
+        end;
       EcFoldCurrent:
         begin
           CY := FFoldedLinesView.ExpandedLineForBlockAtLine(CaretY);
@@ -6949,7 +6982,10 @@ begin
           end;
         end;
       EcUnFoldCurrent:
+        begin
           FFoldedLinesView.UnFoldAtTextIndex(CaretY-1);
+          FCaret.Touch;
+        end;
       EcToggleMarkupWord:
           FMarkupHighCaret.ToggleCurrentWord;
       ecZoomOut, ecZoomIn: begin
@@ -8162,9 +8198,9 @@ begin
     end else begin
       BB := BlockBegin;
       BE := BlockEnd;
-      if (BE.X = 1)
-      then e := BE.y - 1
-      else e := BE.y;
+      if FBlockSelection.LastLineHasSelection
+      then e := BE.y
+      else e := BE.y - 1;
     end;
 
     Spaces := StringOfChar(#32, FBlockIndent);
@@ -8227,10 +8263,10 @@ begin
     BB := BlockBegin;
     BE := BlockEnd;
     // convert selection to complete lines
-    if BE.X = 1 then
-      e := BE.y - 1
+    if FBlockSelection.LastLineHasSelection then
+      e := BE.y
     else
-      e := BE.y;
+      e := BE.y - 1;
   end;
 
   IncPaintLock;
@@ -8532,6 +8568,7 @@ var
   StartPt: TPoint;
   // for ContextMatch
   BracketKind, TmpStart: Integer;
+  SearchingForward: Boolean;
   TmpAttr : TSynHighlighterAttributes;
   // for IsContextBracket
   MaxKnownTokenPos, LastUsedTokenIdx, TokenListCnt: Integer;
@@ -8593,7 +8630,8 @@ var
     while (i > 0) and (TokenPosList[i].X > PosX) do
       dec(i);
     Result := TokenPosList[i].Attr = BracketKind;
-    LastUsedTokenIdx := i;
+    if not SearchingForward then
+      LastUsedTokenIdx := i;
   end;
 
   procedure DoMatchingBracketFound;
@@ -8642,7 +8680,8 @@ var
     PrevPosX := -1;
     PrevCnt := 0;
     // search until start of line
-     while PosX > 1 do begin
+    SearchingForward := False;
+    while PosX > 1 do begin
       Dec(PosX);
       Test := Line[PosX];
       if (Test = q) and IsContextBracket then begin
@@ -8659,6 +8698,8 @@ var
 
     PosX := Len;
     Len := Length(Line);
+    SearchingForward := True;
+    LastUsedTokenIdx := TokenListCnt;
     while PosX < Len do begin
       Inc(PosX);
       Test := Line[PosX];
@@ -8689,6 +8730,7 @@ var
     NumBrackets := 1;
     if Odd(i) then begin
       // closing bracket -> search opening bracket
+      SearchingForward := False;
       repeat
         // search until start of line
         while PosX > 1 do begin
@@ -8717,6 +8759,7 @@ var
       until FALSE;
     end else begin
       // opening bracket -> search closing bracket
+      SearchingForward := True;
       repeat
         // search until end of line
         Len := Length(Line);
@@ -8830,8 +8873,7 @@ begin
         if (PosX >= Start) and (PosX < Start + Length(Token)) then begin
           Attri := Highlighter.GetTokenAttribute;
           TokenType := Highlighter.GetTokenKind;
-          Result := TRUE;
-          exit;
+          exit(True);
         end;
         Highlighter.Next;
       end;
@@ -8840,7 +8882,53 @@ begin
   Token := '';
   Attri := nil;
   TokenType := -1;
-  Result := FALSE;
+  Result := False;
+end;
+
+procedure TCustomSynEdit.CaretAtIdentOrString(XY: TPoint; out AtIdent, NearString: Boolean);
+// This is optimized to check if cursor is on identifier or string.
+var
+  PosX, PosY: integer;
+  Line, Token: string;
+  Start: Integer;
+  Attri, PrevAttri: TSynHighlighterAttributes;
+begin
+  PosY := XY.Y -1;
+  PrevAttri := nil;
+  AtIdent := False;
+  NearString := False;
+  //DebugLn('');
+  //DebugLn('TCustomSynEdit.CaretAtIdentOrString: Enter');
+  if Assigned(Highlighter) and (PosY >= 0) and (PosY < FTheLinesView.Count) then
+  begin
+    Line := FTheLinesView[PosY];
+    fHighlighter.CurrentLines := FTheLinesView;
+    Highlighter.StartAtLineIndex(PosY);
+    PosX := XY.X;
+    //DebugLn([' TCustomSynEdit.CaretAtIdentOrString: Line="', Line, '", PosX=', PosX, ', PosY=', PosY]);
+    if (PosX > 0) and (PosX <= Length(Line)) then
+    begin
+      while not Highlighter.GetEol do
+      begin
+        Start := Highlighter.GetTokenPos + 1;
+        Token := Highlighter.GetToken;
+        //TokenType := Highlighter.GetTokenKind;
+        Attri := Highlighter.GetTokenAttribute;
+        //DebugLn(['  TCustomSynEdit.CaretAtIdentOrString: Start=', Start, ', Token=', Token]);
+        if (PosX >= Start) and (PosX < Start + Length(Token)) then
+        begin
+          AtIdent := Attri = Highlighter.IdentifierAttribute;
+          NearString := (Attri = Highlighter.StringAttribute)
+                 or (PrevAttri = Highlighter.StringAttribute); // If cursor is on end-quote.
+          //DebugLn(['   TCustomSynEdit.CaretAtIdentOrString: Success! Attri=', Attri,
+          //         ', AtIdent=', AtIdent, ', AtString=', AtString]);
+          exit;
+        end;
+        PrevAttri := Attri;
+        Highlighter.Next;
+      end;
+    end;
+  end;
 end;
 
 function TCustomSynEdit.IdentChars: TSynIdentChars;

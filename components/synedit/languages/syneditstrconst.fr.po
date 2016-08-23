@@ -6,10 +6,10 @@ msgstr ""
 "Project-Id-Version: \n"
 "POT-Creation-Date: \n"
 "PO-Revision-Date: \n"
-"Last-Translator: Yann Mérignac <yann.merignac@laposte.net>\n"
-"Language-Team: Vasseur Gilles <gillesvasseur58@gmail.com>\n"
+"Last-Translator: Vasseur Gilles <gillesvasseur58@gmail.com>\n"
+"Language-Team: http://lazarus.developpez.com/\n"
 "Language: fr\n"
-"X-Generator: Poedit 1.7.5\n"
+"X-Generator: Poedit 1.8.7\n"
 
 #: syneditstrconst.syns_attrannotation
 msgid "Annotation"
@@ -483,6 +483,14 @@ msgstr "Souligné, oui, non"
 msgid "No Action"
 msgstr "Pas daction"
 
+#: syneditstrconst.syns_emcoverviewguttergotomark
+msgid "Jump to Mark (Overview Gutter)"
+msgstr "Sauter à la marque (aperçu gouttière)"
+
+#: syneditstrconst.syns_emcoverviewgutterscrollto
+msgid "Scroll (Overview Gutter)"
+msgstr "Défilement (aperçu gouttière)"
+
 #: syneditstrconst.syns_emcpasteselection
 msgid "Quick Paste Selection"
 msgstr "Sélection rapide pour coller"
@@ -524,10 +532,8 @@ msgid "Drag Selection"
 msgstr "Déplacer la sélection"
 
 #: syneditstrconst.syns_emcstartdragmove_opt
-#, fuzzy
-#| msgid "Caret on up if not dragged, No Caret on up if not dragged"
 msgid "\"Caret on up if not dragged\",yes,no"
-msgstr "Curseur sur place s'il n'est pas déplacé ; pas de curseur sur place s'il est déplacé"
+msgstr "Curseur sur place s'il n'est pas déplacé : oui, non"
 
 #: syneditstrconst.syns_emcstartlineselections
 msgid "Line Selection"

@@ -107,6 +107,8 @@ type
   { TPieSeries }
 
   TPieSeries = class(TCustomPieSeries)
+  public
+    property Radius;
   published
     property EdgePen;
     property Depth;
@@ -213,8 +215,6 @@ type
     property LineType: TLineType
       read FLineType write SetLineType default ltFromPrevious;
     property MarkPositions;
-    property OnDrawPointer: TSeriesPointerDrawEvent
-      read FOnDrawPointer write FOnDrawPointer;
     property Pointer;
     property SeriesColor: TColor
       read GetSeriesColor write SetSeriesColor stored false default clBlack;
@@ -225,6 +225,11 @@ type
     property Source;
     property Styles;
     property UseReticule default true;
+    // Events
+    property OnDrawPointer: TSeriesPointerDrawEvent
+      read FOnDrawPointer write FOnDrawPointer; deprecated 'Use OnCustomDrawPointer';
+    property OnCustomDrawPointer;
+    property OnGetPointerStyle;
   end;
 
   // 'TSerie' alias is for compatibility with older versions of TAChart.
@@ -342,7 +347,7 @@ implementation
 
 uses
   GraphMath, GraphType, IntfGraphics, LResources, Math, PropEdits, SysUtils,
-  TADrawerCanvas, TAGeometry, TAGraph, TAMath, TAStyles;
+  TAChartStrConsts, TADrawerCanvas, TAGeometry, TAGraph, TAMath, TAStyles;
 
 { TLineSeries }
 
@@ -1016,11 +1021,11 @@ var
     with imageBar do begin
       TopLeft := ParentChart.GraphToImage(graphBar.a);
       BottomRight := ParentChart.GraphToImage(graphBar.b);
-      NormalizeRect(imageBar);
+      TAGeometry.NormalizeRect(imageBar);
 
       // Draw a line instead of an empty rectangle.
-      if Bottom = Top then Dec(Top);
-      if Left = Right then Inc(Right);
+   //   if Bottom = Top then Dec(Top);
+   //   if Left = Right then Inc(Right);
     end;
     DrawBar(imageBar);
   end;
@@ -1494,14 +1499,14 @@ begin
 end;
 
 initialization
-  RegisterSeriesClass(TLineSeries, 'Line series');
-  RegisterSeriesClass(TAreaSeries, 'Area series');
-  RegisterSeriesClass(TBarSeries, 'Bar series');
-  RegisterSeriesClass(TPieSeries, 'Pie series');
-  RegisterSeriesClass(TUserDrawnSeries, 'User-drawn series');
-  RegisterSeriesClass(TConstantLine, 'Constant line');
-  RegisterSeriesClass(TManhattanSeries, 'Manhattan plot series');
-  {$WARNINGS OFF}RegisterSeriesClass(TLine, '');{$WARNINGS ON}
+  RegisterSeriesClass(TLineSeries, @rsLineSeries);
+  RegisterSeriesClass(TAreaSeries, @rsAreaSeries);
+  RegisterSeriesClass(TBarSeries, @rsBarSeries);
+  RegisterSeriesClass(TPieSeries, @rsPieSeries);
+  RegisterSeriesClass(TUserDrawnSeries, @rsUserDrawnSeries);
+  RegisterSeriesClass(TConstantLine, @rsConstantLine);
+  RegisterSeriesClass(TManhattanSeries, @rsManhattanPlotSeries);
+//  {$WARNINGS OFF}RegisterSeriesClass(TLine, nil);{$WARNINGS ON}
   SkipObsoleteProperties;
 
 end.

@@ -476,6 +476,14 @@ msgstr "Створити подію за замовчуванням"
 msgid "Create new field and add it at current position"
 msgstr "Створити нове поле і додати його в поточну позицію"
 
+#: objinspstrconsts.oiscurrentparent
+msgid "Current parent"
+msgstr ""
+
+#: objinspstrconsts.oiscurrentparents
+msgid "Current parents"
+msgstr ""
+
 #: objinspstrconsts.oiscutcomponents
 msgctxt "objinspstrconsts.oiscutcomponents"
 msgid "Cu&t"
@@ -759,6 +767,14 @@ msgstr "Ви&брати все"
 msgid "Select All Fields"
 msgstr "Вибрати Всі Поля"
 
+#: objinspstrconsts.oisselectedcontrol
+msgid "Selected control"
+msgstr ""
+
+#: objinspstrconsts.oisselectedcontrols
+msgid "Selected controls"
+msgstr ""
+
 #: objinspstrconsts.oisselectedproperties
 msgid "&Selected Properties"
 msgstr ""
@@ -793,6 +809,10 @@ msgstr "Встановити за замовчуванням: %s"
 
 #: objinspstrconsts.oissettodefaulthint
 msgid "Set property value to Default"
+msgstr ""
+
+#: objinspstrconsts.oisshowclasses
+msgid "Show classes"
 msgstr ""
 
 #: objinspstrconsts.oisshowcomponenttree
@@ -1320,9 +1340,17 @@ msgstr "Немає"
 msgid "Add Images"
 msgstr "Додати Зображення"
 
+#: objinspstrconsts.sccsiledtopendialogn
+msgid "New Image"
+msgstr ""
+
 #: objinspstrconsts.sccsiledtransparentcolor
 msgid "Transparent Color:"
 msgstr "Прозорий колір:"
+
+#: objinspstrconsts.sccsiledtreplace
+msgid "&Replace ..."
+msgstr ""
 
 #: objinspstrconsts.sccsiledtsave
 msgctxt "objinspstrconsts.sccsiledtsave"
@@ -1543,6 +1571,10 @@ msgstr "Захопити кнопку"
 #: objinspstrconsts.s_addassingle
 msgid "Add as single"
 msgstr "Додати як один"
+
+#: objinspstrconsts.s_confirm_clear
+msgid "Are you sure to clear image list?"
+msgstr ""
 
 #: objinspstrconsts.s_splitimage
 msgid "Split image"

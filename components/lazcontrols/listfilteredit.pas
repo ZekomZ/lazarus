@@ -68,14 +68,7 @@ type
 var
   ListFilterGlyph: TBitmap;
 
-procedure Register;
-
 implementation
-
-procedure Register;
-begin
-  RegisterComponents('LazControls',[TListFilterEdit]);
-end;
 
 { TListBoxFilterEdit }
 
@@ -166,28 +159,19 @@ procedure TListFilterEdit.SortAndFilter;
 // Copy data from fOriginalData to fSortedData in sorted order
 var
   Origi, i: Integer;
-  s: string;
-  Pass, Done: Boolean;
+  Capt, FilterLC: string;
 begin
-  Done:=False;
   fSortedData.Clear;
+  FilterLC:=UTF8LowerCase(Filter);
   for Origi:=0 to fOriginalData.Count-1 do begin
-    s:=fOriginalData[Origi];
-    // Filter with event handler if there is one.
-    if Assigned(OnFilterItem) then
-      Pass:=OnFilterItem(fOriginalData.Objects[Origi], Done)
-    else
-      Pass:=False;
-    // Filter by item's title text if needed.
-    if not (Pass or Done) then
-      Pass:=(Filter='') or (Pos(Filter,UTF8LowerCase(s))>0);
-    if Pass then begin
+    Capt:=fOriginalData[Origi];
+    if DoFilterItem(Capt, FilterLC, fOriginalData.Objects[Origi]) then begin
       i:=fSortedData.Count-1;       // Always sort the data.
       while i>=0 do begin
-        if CompareFNs(s,fSortedData[i])>=0 then break;
+        if CompareFNs(Capt,fSortedData[i])>=0 then break;
         dec(i);
       end;
-      fSortedData.InsertObject(i+1, s, fOriginalData.Objects[Origi]);
+      fSortedData.InsertObject(i+1, Capt, fOriginalData.Objects[Origi]);
     end;
   end;
 end;
@@ -264,32 +248,6 @@ begin
   MoveTo(i, ASelect);
 end;
 
-procedure TListFilterEdit.MovePageDown(ASelect: Boolean);
-var
-  I: Integer;
-begin
-  if fFilteredListbox.Items.Count = 0 then
-    Exit;
-  I := fFilteredListbox.ItemIndex + Pred(fFilteredListbox.ClientHeight div fFilteredListbox.ItemHeight);
-  if (I < 0) or (I >= fFilteredListbox.Items.Count) then
-    I := fFilteredListbox.Items.Count-1;
-
-  MoveTo(I, ASelect);
-end;
-
-procedure TListFilterEdit.MovePageUp(ASelect: Boolean);
-var
-  I: Integer;
-begin
-  if fFilteredListbox.Items.Count = 0 then
-    Exit;
-  I := fFilteredListbox.ItemIndex - Pred(fFilteredListbox.ClientHeight div fFilteredListbox.ItemHeight);
-  if (I < 0) or (I >= fFilteredListbox.Items.Count) then
-    I := 0;
-
-  MoveTo(I, ASelect);
-end;
-
 procedure TListFilterEdit.MovePrev(ASelect: Boolean);
 var
   i: Integer;
@@ -301,9 +259,39 @@ begin
   MoveTo(i, ASelect);
 end;
 
+procedure TListFilterEdit.MovePageDown(ASelect: Boolean);
+var
+  i, ih: Integer;
+begin
+  if fFilteredListbox.Items.Count = 0 then
+    Exit;
+  ih := fFilteredListbox.ItemHeight;
+  if ih = 0 then  //fFilteredListbox.ItemHeight is always zero. Why?
+    ih := 22;
+  i := fFilteredListbox.ItemIndex + Pred(fFilteredListbox.ClientHeight div ih);
+  if (i < 0) or (i >= fFilteredListbox.Items.Count) then
+    i := fFilteredListbox.Items.Count-1;
+  MoveTo(i, ASelect);
+end;
+
+procedure TListFilterEdit.MovePageUp(ASelect: Boolean);
+var
+  i, ih: Integer;
+begin
+  if fFilteredListbox.Items.Count = 0 then
+    Exit;
+  ih := fFilteredListbox.ItemHeight;
+  if ih = 0 then
+    ih := 22;
+  i := fFilteredListbox.ItemIndex - Pred(fFilteredListbox.ClientHeight div ih);
+  if (i < 0) or (i >= fFilteredListbox.Items.Count) then
+    i := 0;
+  MoveTo(i, ASelect);
+end;
+
 procedure TListFilterEdit.MoveTo(AIndex: Integer; ASelect: Boolean);
 var
-  I, xOldItemIndex, xSelStart, xSelEnd: Integer;
+  i, xOldItemIndex, xSelStart, xSelEnd: Integer;
 begin
   fFilteredListbox.LockSelectionChange;
   fFilteredListbox.Items.BeginUpdate;
@@ -318,23 +306,24 @@ begin
       while (xSelEnd<fFilteredListbox.Count) and fFilteredListbox.Selected[xSelEnd] do
         Inc(xSelEnd);
       fFilteredListbox.ItemIndex := AIndex;
-      for I := Min(AIndex+1, xSelStart+1) to Max(AIndex-1, xSelEnd-1) do
-        fFilteredListbox.Selected[I] := True;
+      for i := Min(AIndex+1, xSelStart+1) to Max(AIndex-1, xSelEnd-1) do
+        fFilteredListbox.Selected[i] := True;
       //Win32 sets ItemIndex to the last Selected[?] := True - in contrast to Gtk2 -> set selected again to work on all widgetsets
-      fFilteredListbox.Selected[AIndex] := True;
+       fFilteredListbox.Selected[AIndex] := True;
     end else
     begin
       fFilteredListbox.ItemIndex := AIndex;
       fFilteredListbox.Selected[AIndex] := True;
     end;
-
-    if not fFilteredListbox.ItemFullyVisible(AIndex) then
+    Assert(fFilteredListbox.ItemFullyVisible(AIndex), 'TListFilterEdit.MoveTo: Item not fully visible');
+{    if not fFilteredListbox.ItemFullyVisible(AIndex) then
     begin
       if fFilteredListbox.TopIndex < AIndex then
         fFilteredListbox.TopIndex := AIndex - Pred(fFilteredListbox.ClientHeight div fFilteredListbox.ItemHeight)
       else
         fFilteredListbox.TopIndex := AIndex;
     end;
+}
   finally
     fFilteredListbox.UnlockSelectionChange;
     fFilteredListbox.Items.EndUpdate;

@@ -37,6 +37,9 @@ uses
   // RTL + FCL + LCL
   Classes, SysUtils, math, process, Pipes,
   LCLIntf, Forms, Dialogs,
+  {$IFDEF VerboseExtToolThread}
+  LCLProc,
+  {$ENDIF}
   // CodeTools
   FileProcs, CodeToolsStructs,
   // LazUtils
@@ -761,7 +764,7 @@ end;
 
 procedure TExternalTool.DoStart;
 var
-  s: String;
+  i: Integer;
 begin
   // set Stage to etsStarting
   EnterCriticalSection;
@@ -786,13 +789,11 @@ begin
     FThread.FreeOnTerminate:=true;
   end;
   if ConsoleVerbosity>=-1 then begin
-    if ExtToolConsole=nil then
-      s:=''
-    else
-      s:='"'+CmdLineParams+'"';
-    debugln(['Hint: (lazarus) Execute Title="',Title,'", Working Directory="',Process.CurrentDirectory,'", Executable="',Process.Executable,'" Params:',s]);
-    if ExtToolConsole=nil then
-      debugln(Process.Parameters.Text);
+    debugln(['Info: (lazarus) Execute Title="',Title,'"']);
+    debugln(['Info: (lazarus) Working Directory="',Process.CurrentDirectory,'"']);
+    debugln(['Info: (lazarus) Executable="',Process.Executable,'"']);
+    for i:=0 to Process.Parameters.Count-1 do
+      debugln(['Info: (lazarus) Param[',i,']="',Process.Parameters[i],'"']);
   end;
   Thread.Start;
 end;

@@ -65,11 +65,20 @@ type
       AStartAngle16Deg, AAngleLength16Deg: Integer);
     procedure Rectangle(const ARect: TRect);
     procedure Rectangle(AX1, AY1, AX2, AY2: Integer);
+    procedure ResetFont;
     procedure SetAntialiasingMode(AValue: TChartAntialiasingMode);
     procedure SetBrushColor(AColor: TChartColor);
     procedure SetBrushParams(AStyle: TFPBrushStyle; AColor: TChartColor);
     procedure SetPenParams(AStyle: TFPPenStyle; AColor: TChartColor);
     procedure SetTransparency(ATransparency: TChartTransparency);
+  end;
+
+  TScaledCanvasDrawer = class(TCanvasDrawer)
+  protected
+    FCoeff: Double;
+  public
+    constructor Create(ACanvas: TCanvas; ACoeff: Double; AScaleItems: TScaleItems);
+    function Scale(ADistance: Integer): Integer; override;
   end;
 
   function CanvasGetFontOrientationFunc(AFont: TFPCustomFont): Integer;
@@ -78,7 +87,7 @@ type
 implementation
 
 uses
-  GraphType, LCLIntf, LCLType, IntfGraphics,
+  GraphType, Math, LCLIntf, LCLType, IntfGraphics,
   TAGeometry;
 
 function CanvasGetFontOrientationFunc(AFont: TFPCustomFont): Integer;
@@ -212,7 +221,9 @@ begin
       Mode := pmXor
     else
       Mode := pmCopy;
-    Width := 1;
+    if (scalePen in FScaleItems) then
+      Width := Scale(1) else
+      Width := 1;
   end;
 end;
 
@@ -262,6 +273,11 @@ end;
 procedure TCanvasDrawer.Rectangle(const ARect: TRect);
 begin
   GetCanvas.Rectangle(ARect);
+end;
+
+procedure TCanvasDrawer.ResetFont;
+begin
+  GetCanvas.Font.Orientation := 0;
 end;
 
 procedure TCanvasDrawer.SetAntialiasingMode(AValue: TChartAntialiasingMode);
@@ -328,12 +344,14 @@ begin
     end;
     if FMonochromeColor <> clTAColor then
       Color := FMonochromeColor;
+    if scaleFont in FScaleItems then
+      Size := Scale(IfThen(Size = 0, DEFAULT_FONT_SIZE, Size));
   end;
 end;
 
 procedure TCanvasDrawer.SetPen(APen: TFPCustomPen);
 begin
-  with GetCanvas do
+  with GetCanvas do begin
     if FXor then begin
       Brush.Style := bsClear;
       if APen = nil then
@@ -360,6 +378,9 @@ begin
       if FMonochromeColor <> clTAColor then
         Pen.Color := FMonochromeColor;
     end;
+    if scalePen in FScaleItems then
+      Pen.Width := Scale(Pen.Width);
+  end;
 end;
 
 procedure TCanvasDrawer.SetPenParams(AStyle: TFPPenStyle; AColor: TChartColor);
@@ -473,6 +494,22 @@ begin
     DrawXorText
   else
     DrawSimpleText(GetCanvas, AX, AY, AText);
+end;
+
+
+{ TScaledCanvasDrawer }
+
+constructor TScaledCanvasDrawer.Create(ACanvas: TCanvas; ACoeff: Double;
+  AScaleItems: TScaleItems);
+begin
+  inherited Create(ACanvas);
+  FCoeff := ACoeff;
+  FScaleItems := AScaleItems;
+end;
+
+function TScaledCanvasDrawer.Scale(ADistance: Integer): Integer;
+begin
+  Result := Round(FCoeff * ADistance);
 end;
 
 initialization

@@ -58,7 +58,6 @@ type
     function CalcNonClientHeight: Integer;
   protected
     procedure DoActive;
-    procedure DoShow; override;
     procedure WndProc(var Message: TLMessage); override;
     procedure Resizing(State: TWindowState); override;
   public
@@ -84,6 +83,7 @@ type
       //itmFileOpenSave: TIDEMenuSection;
         itmFileOpen: TIDEMenuCommand;
         itmFileRevert: TIDEMenuCommand;
+        itmFileOpenUnit: TIDEMenuCommand;
         //itmFileRecentOpen: TIDEMenuSection;
         itmFileSave: TIDEMenuCommand;
         itmFileSaveAs: TIDEMenuCommand;
@@ -204,7 +204,7 @@ type
         itmSourceToggleComment: TIDEMenuCommand;
         itmSourceEncloseBlock: TIDEMenuCommand;
         itmSourceEncloseInIFDEF: TIDEMenuCommand;
-        itmSourceCompleteCode: TIDEMenuCommand;
+        itmSourceCompleteCodeInteractive: TIDEMenuCommand;
         itmSourceUseUnit: TIDEMenuCommand;
       //itmSourceCodeToolChecks: TIDEMenuSection;
         itmSourceSyntaxCheck: TIDEMenuCommand;
@@ -263,6 +263,7 @@ type
       //itmProjectSaveSection: TIDEMenuSection;
         itmProjectSave: TIDEMenuCommand;
         itmProjectSaveAs: TIDEMenuCommand;
+        itmProjectResaveFormsWithI18n: TIDEMenuCommand;
         itmProjectPublish: TIDEMenuCommand;
       //itmProjectWindowSection: TIDEMenuSection;
         itmProjectInspector: TIDEMenuCommand;
@@ -274,7 +275,6 @@ type
         itmProjectViewUnits: TIDEMenuCommand;
         itmProjectViewForms: TIDEMenuCommand;
         itmProjectViewSource: TIDEMenuCommand;
-        itmProjectBuildMode: TIDEMenuCommand;
 
     // run menu
     //mnuRun: TIDEMenuSection;
@@ -286,6 +286,7 @@ type
         itmRunMenuBuildManyModes: TIDEMenuCommand;
         itmRunMenuAbortBuild: TIDEMenuCommand;
       //itmRunnning: TIDEMenuSection;
+        itmRunMenuRunWithoutDebugging: TIDEMenuCommand;
         itmRunMenuRun: TIDEMenuCommand;
         itmRunMenuPause: TIDEMenuCommand;
         itmRunMenuShowExecutionPoint: TIDEMenuCommand;
@@ -315,7 +316,7 @@ type
     //mnuComponents: TIDEMenuSection;
       //itmPkgOpening: TIDEMenuSection;
         itmPkgNewPackage: TIDEMenuCommand;
-        itmPkgOpenPackage: TIDEMenuCommand;
+        itmPkgOpenLoadedPackage: TIDEMenuCommand;
         itmPkgOpenPackageFile: TIDEMenuCommand;
         itmPkgOpenPackageOfCurUnit: TIDEMenuCommand;
         //itmPkgOpenRecent: TIDEMenuSection;
@@ -387,6 +388,7 @@ type
     procedure DoSetMainIDEHeight(const AIDEIsMaximized: Boolean; ANewHeight: Integer = 0);
     procedure DoSetViewComponentPalette(aVisible: Boolean);
     procedure AllowCompilation(aAllow: Boolean);
+    procedure InitPaletteAndCoolBar;
   end;
 
 var
@@ -413,22 +415,24 @@ end;
 
 procedure TMainIDEBar.DoSetMainIDEHeight(const AIDEIsMaximized: Boolean; ANewHeight: Integer);
 begin
-  if not Showing then
-    Exit;
-
-  if ANewHeight <= 0 then
-    ANewHeight := CalcMainIDEHeight;
+  if not Showing then Exit;
 
   if Assigned(IDEDockMaster) then
   begin
     if EnvironmentOptions.Desktop.AutoAdjustIDEHeight then
+    begin
+      if ANewHeight <= 0 then
+        ANewHeight := CalcMainIDEHeight;
       IDEDockMaster.AdjustMainIDEWindowHeight(Self, True, ANewHeight)
+    end
     else
       IDEDockMaster.AdjustMainIDEWindowHeight(Self, False, 0);
   end else
   begin
     if (AIDEIsMaximized or EnvironmentOptions.Desktop.AutoAdjustIDEHeight) then
     begin
+      if ANewHeight <= 0 then
+        ANewHeight := CalcMainIDEHeight;
       Inc(ANewHeight, CalcNonClientHeight);
       if ANewHeight <> Constraints.MaxHeight then
       begin
@@ -444,13 +448,6 @@ begin
       Constraints.MinHeight := 0;
     end;
   end;
-end;
-
-procedure TMainIDEBar.DoShow;
-begin
-  inherited DoShow;
-  RefreshCoolbar;
-  ComponentPageControl.OnChange(Self);//refresh component palette with button reposition
 end;
 
 function TMainIDEBar.CalcNonClientHeight: Integer;
@@ -527,7 +524,7 @@ begin
     begin
       AForm:=Screen.CustomForms[i];
       if (AForm.Parent=nil) and (AForm<>Self) and (AForm.IsVisible)
-      and (AForm.Designer=nil) and (not (csDesigning in AForm.ComponentState))
+      and not IsFormDesign(AForm)
       and not (fsModal in AForm.FormState) then
         inc(FormCount);
     end;
@@ -675,6 +672,15 @@ begin
   SetupHints;
 end;
 
+procedure TMainIDEBar.InitPaletteAndCoolBar;
+begin
+  RefreshCoolbar;
+  ComponentPageControl.OnChange(Self);//refresh component palette with button reposition
+  SetMainIDEHeight;
+  if IDEDockMaster<>nil then
+    IDEDockMaster.ResetSplitters;
+end;
+
 procedure TMainIDEBar.RefreshCoolbar;
 var
   I: Integer;
@@ -815,6 +821,7 @@ procedure TMainIDEBar.AllowCompilation(aAllow: Boolean);
 // Enables or disables IDE GUI controls associated with compiling and building.
 // Does it interfere with DebugBoss.UpdateButtonsAndMenuItems? Maybe should be refactored and combined.
 begin
+  itmRunMenuRunWithoutDebugging.Enabled:=aAllow;
   itmRunMenuRun.Enabled:=aAllow;
   itmRunMenuCompile.Enabled:=aAllow;
   itmRunMenuBuild.Enabled:=aAllow;

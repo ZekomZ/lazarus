@@ -1,7 +1,7 @@
 object ChgEncodingDialog: TChgEncodingDialog
   Left = 290
   Height = 560
-  Top = 191
+  Top = 163
   Width = 683
   ActiveControl = OwnerComboBox
   BorderIcons = [biSystemMenu, biMaximize]
@@ -11,7 +11,7 @@ object ChgEncodingDialog: TChgEncodingDialog
   OnCreate = FormCreate
   OnDestroy = FormDestroy
   Position = poScreenCenter
-  LCLVersion = '1.5'
+  LCLVersion = '1.7'
   object FilesGroupBox: TGroupBox
     Left = 6
     Height = 151
@@ -221,36 +221,48 @@ object ChgEncodingDialog: TChgEncodingDialog
   end
   object PreviewGroupBox: TGroupBox
     Left = 6
-    Height = 292
-    Top = 224
+    Height = 243
+    Top = 273
     Width = 671
     Align = alClient
     BorderSpacing.Around = 6
     Caption = 'PreviewGroupBox'
-    ClientHeight = 272
+    ClientHeight = 223
     ClientWidth = 667
     TabOrder = 2
     object PreviewListView: TListView
       Left = 5
-      Height = 262
+      Height = 213
       Top = 5
       Width = 657
       Align = alClient
       BorderSpacing.Around = 5
+      Checkboxes = True
       Columns = <      
         item
           AutoSize = True
           Caption = 'Files'
-          Width = 659
+          Width = 653
         end      
         item
           AutoSize = True
           Caption = 'Encoding'
           Width = 62
         end>
+      SortColumn = 1
       SortType = stText
       TabOrder = 0
       ViewStyle = vsReport
     end
+  end
+  object LabelNoPreview: TLabel
+    Left = 20
+    Height = 15
+    Top = 238
+    Width = 643
+    Align = alTop
+    BorderSpacing.Around = 20
+    Caption = 'LabelNoPreview'
+    ParentColor = False
   end
 end

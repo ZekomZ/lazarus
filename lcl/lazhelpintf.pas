@@ -1157,7 +1157,7 @@ begin
           if (FileItem.FileMatches(Filename)) then begin
             CreateNodeQueryListAndAdd(FileItem.Node,PascalContext,ListOfNodes,true);
             {$IFNDEF DisableChecks}
-            debugln('THelpDatabase.GetNodesForPascalContexts C FileItem.ClassName=',FileItem.ClassName,' Filename=',Filename,' ',dbgs(ListOfNodes.Count));
+            debugln(['THelpDatabase.GetNodesForPascalContexts C ID="',ID,'" ',i+1,'/',ListOfPascalHelpContextList.Count,' FileItem.ClassName=',FileItem.ClassName,' Filename=',Filename,' ',ListOfNodes.Count]);
             {$ENDIF}
           end;
         end;
@@ -1959,7 +1959,7 @@ begin
   for i:=0 to Count-1 do begin
     HelpDB:=Items[i];
     Path:=HelpDB.ID;
-    if (Path='') or (not IsValidIdent(Path)) then continue;
+    if not IsValidIdent(Path) then continue;
     Storage.AppendBasePath(Path);
     try
       HelpDB.Load(Storage);
@@ -1978,7 +1978,7 @@ begin
   for i:=0 to Count-1 do begin
     HelpDB:=Items[i];
     Path:=HelpDB.ID;
-    if (Path='') or (not IsValidIdent(Path)) then continue;
+    if not IsValidIdent(Path) then continue;
     Storage.AppendBasePath(Path);
     try
       HelpDB.Save(Storage);
@@ -2069,7 +2069,7 @@ begin
   for i:=0 to Count-1 do begin
     Viewer:=Items[i];
     Path:=Viewer.StorageName;
-    if (Path='') or (not IsValidIdent(Path)) then continue;
+    if not IsValidIdent(Path) then continue;
     Storage.AppendBasePath(Path);
     try
       Viewer.Load(Storage);
@@ -2088,7 +2088,7 @@ begin
   for i:=0 to Count-1 do begin
     Viewer:=Items[i];
     Path:=Viewer.StorageName;
-    if (Path='') or (not IsValidIdent(Path)) then continue;
+    if not IsValidIdent(Path) then continue;
     Storage.AppendBasePath(Path);
     try
       Viewer.Save(Storage);

@@ -46,6 +46,7 @@ unit DefineTemplates;
 
 { $Define VerboseDefineCache}
 { $Define VerboseFPCSrcScan}
+
 { $Define ShowTriedFiles}
 { $Define ShowTriedUnits}
 
@@ -105,7 +106,7 @@ const
   VirtualTempDir='TEMPORARYDIRECTORY';
   
   // FPC operating systems and processor types
-  FPCOperatingSystemNames: array[1..33] of shortstring =(
+  FPCOperatingSystemNames: array[1..34] of shortstring =(
      'linux',
      'win32','win64','wince',
      'darwin','macos',
@@ -133,9 +134,10 @@ const
      'solaris',
      'symbian',
      'watcom',
-     'wdosx'
+     'wdosx',
+     'wii'
     );
-  FPCOperatingSystemCaptions: array[1..33] of shortstring =(
+  FPCOperatingSystemCaptions: array[1..34] of shortstring =(
      'AIX',
      'Amiga',
      'Android',
@@ -168,7 +170,8 @@ const
      'wdosx',
      'Win32',
      'Win64',
-     'WinCE'
+     'WinCE',
+     'Wii'
     );
 
   FPCOperatingSystemAlternativeNames: array[1..2] of shortstring =(
@@ -178,7 +181,7 @@ const
       'bsd', 'linux' // see GetDefaultSrcOS2ForTargetOS
     );
   FPCProcessorNames: array[1..12] of shortstring =(
-      'a64',
+      'aarch64',
       'arm',
       'avr',
       'i386',
@@ -1041,7 +1044,10 @@ function RunFPCVerbose(const CompilerFilename, TestFilename: string;
                        out Defines, Undefines: TStringToStringTree;
                        const Options: string = ''): boolean;
 function GatherUnitsInSearchPaths(SearchPaths: TStrings;
-                    const OnProgress: TDefinePoolProgress): TStringToStringTree; // unit names to full file name
+                    const OnProgress: TDefinePoolProgress;
+                    CheckFPMkInst: boolean = false): TStringToStringTree; // unit names to full file name
+function GatherUnitSourcesInDirectory(Directory: string;
+                    MaxLevel: integer = 1): TStringToStringTree; // unit names to full file name
 procedure AdjustFPCSrcRulesForPPUPaths(Units: TStringToStringTree;
                                        Rules: TFPCSourceRules);
 function GatherUnitsInFPCSources(Files: TStringList;
@@ -1239,10 +1245,11 @@ begin
         break;
       BaseDir:=ChompPathDelim(ExtractFilePath(copy(BaseDir,1,BaseDirLen-1)));
       BaseDirLen:=length(BaseDir);
+      if (BaseDir='') or (BaseDir[length(BaseDir)]=PathDelim) then break;
     end;
   end;
   // create relative paths
-  if BaseDir<>'' then
+  if (BaseDir<>'') then
     for i:=0 to Result.Count-1 do begin
       Filename:=Result[i];
       Filename:=copy(Filename,BaseDirLen+1,length(Filename));
@@ -1318,7 +1325,7 @@ begin
   try
     buf:='';
     if (MainThreadID=GetCurrentThreadId) and not Quiet then begin
-      DbgOut(['RunTool ',Filename]);
+      DbgOut(['Hint: (lazarus) [RunTool] ',Filename]);
       for i:=0 to Params.Count-1 do
         dbgout(' "',Params[i],'"');
       Debugln;
@@ -1734,24 +1741,46 @@ begin
 end;
 
 function GatherUnitsInSearchPaths(SearchPaths: TStrings;
-  const OnProgress: TDefinePoolProgress): TStringToStringTree;
+  const OnProgress: TDefinePoolProgress; CheckFPMkInst: boolean
+  ): TStringToStringTree;
 { returns a stringtree,
   where name is unitname and value is the full file name
 
   SearchPaths are searched from last to start
   first found wins
-  pas, pp, p wins vs ppu
+  pas, pp, p replaces ppu
+
+  check for each UnitPath of the form
+    lib/fpc/<FPCVer>/units/<FPCTarget>/<name>/
+  if there is lib/fpc/<FPCVer>/fpmkinst/><FPCTarget>/<name>.fpm
+  and search line SourcePath=<directory>
+  and search source files in this directory including subdirectories
 }
+
+  function SearchPriorPathDelim(var p: integer; const Filename: string): boolean; inline;
+  begin
+    repeat
+      dec(p);
+      if p<1 then exit(false)
+    until Filename[p]=PathDelim;
+    Result:=true;
+  end;
+
 var
   i: Integer;
   Directory: String;
-  FileCount: Integer;
+  FileCount, p, EndPos, FPCTargetEndPos: Integer;
   Abort: boolean;
   FileInfo: TSearchRec;
   ShortFilename: String;
   Filename: String;
   Ext: String;
-  Unit_Name: String;
+  Unit_Name, PkgName, FPMFilename, FPMSourcePath, Line, SrcFilename: String;
+  AVLNode: TAVLTreeNode;
+  S2SItem: PStringToStringTreeItem;
+  FPMToUnitTree: TStringToPointerTree;// pkgname to TStringToStringTree (unitname to source filename)
+  sl: TStringListUTF8;
+  PkgUnitToFilename: TStringToStringTree;
 begin
   Result:=TStringToStringTree.Create(false);
   FileCount:=0;
@@ -1784,6 +1813,122 @@ begin
     end;
     FindCloseUTF8(FileInfo);
   end;
+
+  if CheckFPMkInst then begin
+    // try to resolve .ppu files via fpmkinst .fpm files
+    FPMToUnitTree:=nil;
+    try
+      AVLNode:=Result.Tree.FindLowest;
+      while AVLNode<>nil do begin
+        S2SItem:=PStringToStringTreeItem(AVLNode.Data);
+        Unit_Name:=S2SItem^.Name;
+        Filename:=S2SItem^.Value; // trimmed and expanded filename
+        //if Pos('lazmkunit',Filename)>0 then
+        //  debugln(['GatherUnitsInSearchPaths ===== ',Filename]);
+        AVLNode:=Result.Tree.FindSuccessor(AVLNode);
+        if CompareFileExt(Filename,'ppu',false)<>0 then continue;
+        // check if filename has the form
+        //                  /something/lib/fpc/<FPCVer>/units/<FPCTarget>/<pkgname>/
+        // and if there is  /something/lib/fpc/<FPCVer>/fpmkinst/><FPCTarget>/<pkgname>.fpm
+        p:=length(Filename);
+        if not SearchPriorPathDelim(p,Filename) then exit;
+        // <pkgname>
+        EndPos:=p;
+        if not SearchPriorPathDelim(p,Filename) then exit;
+        PkgName:=copy(Filename,p+1,EndPos-p-1);
+        if PkgName='' then continue;
+        FPCTargetEndPos:=p;
+        if not SearchPriorPathDelim(p,Filename) then exit;
+        // <fpctarget>
+        EndPos:=p;
+        if not SearchPriorPathDelim(p,Filename) then exit;
+        // 'units'
+        if (EndPos-p<>6) or (CompareIdentifiers(@Filename[p+1],'units')<>0) then
+          continue;
+        FPMFilename:=copy(Filename,1,p)+'fpmkinst'
+                    +copy(Filename,EndPos,FPCTargetEndPos-EndPos+1)+PkgName+'.fpm';
+        if FPMToUnitTree=nil then begin
+          FPMToUnitTree:=TStringToPointerTree.Create(false);
+          FPMToUnitTree.FreeValues:=true;
+        end;
+        if not FPMToUnitTree.Contains(PkgName) then begin
+          FPMSourcePath:='';
+          if FileExistsCached(FPMFilename) then begin
+            //debugln(['GatherUnitsInSearchPaths Found .fpm: ',FPMFilename]);
+            sl:=TStringListUTF8.Create;
+            try
+              try
+                sl.LoadFromFile(FPMFilename);
+                for i:=0 to sl.Count-1 do begin
+                  Line:=sl[i];
+                  if LeftStr(Line,length('SourcePath='))='SourcePath=' then
+                  begin
+                    FPMSourcePath:=TrimAndExpandDirectory(copy(Line,length('SourcePath=')+1,length(Line)));
+                    break;
+                  end;
+                end;
+              except
+                on E: Exception do
+                  debugln(['Warning: (lazarus) [GatherUnitsInSearchPaths] ',E.Message]);
+              end;
+            finally
+              sl.Free;
+            end;
+          end;
+          if FPMSourcePath<>'' then begin
+            PkgUnitToFilename:=GatherUnitSourcesInDirectory(FPMSourcePath,5);
+            FPMToUnitTree[PkgName]:=PkgUnitToFilename;
+            //debugln(['GatherUnitsInSearchPaths Pkg=',PkgName,' UnitsFound=',PkgUnitToFilename.Count]);
+          end else
+            FPMToUnitTree[PkgName]:=nil; // mark as not found
+        end;
+
+        PkgUnitToFilename:=TStringToStringTree(FPMToUnitTree[PkgName]);
+        if PkgUnitToFilename=nil then continue;
+        SrcFilename:=PkgUnitToFilename[Unit_Name];
+        if SrcFilename<>'' then begin
+          // unit source found in fppkg -> replace ppu with src file
+          //debugln(['GatherUnitsInSearchPaths ppu=',Filename,' -> fppkg src=',SrcFilename]);
+          Result[Unit_Name]:=SrcFilename;
+        end;
+      end;
+    finally
+      FPMToUnitTree.Free;
+    end;
+  end;
+end;
+
+function GatherUnitSourcesInDirectory(Directory: string; MaxLevel: integer
+  ): TStringToStringTree;
+
+  procedure Traverse(Dir: string; Tree: TStringToStringTree; Lvl: integer);
+  var
+    Info: TSearchRec;
+    Filename: String;
+    AnUnitName: String;
+  begin
+    if FindFirstUTF8(Dir+AllFilesMask,faAnyFile,Info)=0 then begin
+      repeat
+        Filename:=Info.Name;
+        if (Filename='') or (Filename='.') or (Filename='..') then continue;
+        if faDirectory and Info.Attr>0 then begin
+          if Lvl<MaxLevel then
+            Traverse(Dir+Filename+PathDelim,Tree,Lvl+1);
+        end else if FilenameIsPascalUnit(Filename) then begin
+          AnUnitName:=ExtractFileNameOnly(Filename);
+          if not Tree.Contains(AnUnitName) then
+            Tree[AnUnitName]:=Dir+Filename;
+        end;
+      until FindNextUTF8(Info)<>0;
+    end;
+    FindCloseUTF8(Info);
+  end;
+
+begin
+  Result:=TStringToStringTree.Create(false);
+  if MaxLevel<1 then exit;
+  Directory:=AppendPathDelim(Directory);
+  Traverse(Directory,Result,1);
 end;
 
 procedure AdjustFPCSrcRulesForPPUPaths(Units: TStringToStringTree;
@@ -2062,6 +2207,8 @@ end;
 
 function CreateFPCSourceTemplate(FPCSrcDir: string; Owner: TObject
   ): TDefineTemplate;
+const
+  RTLPkgDirs: array[1..4] of string = ('rtl-console','rtl-extra','rtl-objpas','rtl-unicode');
 var
   Dir, SrcOS, SrcOS2, aTargetCPU,
   IncPathMacro: string;
@@ -2129,7 +2276,7 @@ var
   PkgExtraGraphDir: TDefineTemplate;
   PkgExtraAMunitsDir: TDefineTemplate;
   FCLSubSrcDir: TDefineTemplate;
-  FCLSubDir: TDefineTemplate;
+  FCLSubDir, SubPkgDir: TDefineTemplate;
   Ok: Boolean;
 begin
   {$IFDEF VerboseFPCSrcScan}
@@ -2245,7 +2392,6 @@ begin
       ExternalMacroStart+'SrcPath',s,da_DefineRecurse));
     RTLDir.AddChild(RTLOSDir);
 
-
     // fcl
     FCLDir:=TDefineTemplate.Create('FCL',ctsFreePascalComponentLibrary,'','fcl',
         da_Directory);
@@ -2276,6 +2422,16 @@ begin
     PackagesDir:=TDefineTemplate.Create('Packages',ctsPackageDirectories,'',
        'packages',da_Directory);
     MainDir.AddChild(PackagesDir);
+
+    // packages/rtl-*
+    for s in RTLPkgDirs do begin
+      SubPkgDir:=TDefineTemplate.Create(s,s,'',s,da_Directory);
+      PackagesDir.AddChild(SubPkgDir);
+      SubPkgDir.AddChild(TDefineTemplate.Create('Include Path',
+        Format(ctsIncludeDirectoriesPlusDirs,['inc']),
+        IncludePathMacroName,
+        d(DefinePathMacro+'/inc'),da_DefineRecurse));
+    end;
 
     // packages/fcl-base
     FCLBaseDir:=TDefineTemplate.Create('FCL-base',
@@ -2858,8 +3014,8 @@ begin
     Result:=Result+'x64'
   else if SysUtils.CompareText(TargetCPU,'ia64')=0 then
     Result:=Result+'ia64'
-  else if SysUtils.CompareText(TargetCPU,'a64')=0 then
-    Result:=Result+'a64'
+  else if SysUtils.CompareText(TargetCPU,'aarch64')=0 then
+    Result:=Result+'aarch64'
   else
     Result:='fpc';
   Result:=Result+ExeExt;
@@ -2919,10 +3075,25 @@ procedure GetTargetProcessors(const TargetCPU: string; aList: TStrings);
     aList.Add('mips32');
     aList.Add('mips32r2');
   end;
+  
+  procedure AVR;
+  begin
+    aList.Add('AVR1');
+    aList.Add('AVR2');
+    aList.Add('AVR25');
+    aList.Add('AVR3');
+    aList.Add('AVR31');
+    aList.Add('AVR35');
+    aList.Add('AVR4');
+    aList.Add('AVR5');
+    aList.Add('AVR51');
+    aList.Add('AVR6');
+  end;
 
 begin
   case TargetCPU of
     'arm'    : Arm;
+    'avr'    : AVR;
     'i386'   : Intel_i386;
     'm68k'   : ;
     'powerpc': PowerPC;
@@ -2930,7 +3101,7 @@ begin
     'x86_64' : Intel_x86_64;
     'mipsel','mips' : Mips;
     'jvm'    : ;
-    'a64'    : ;
+    'aarch64': ;
   end;
 end;
 
@@ -6662,13 +6833,21 @@ function TDefinePool.CreateFPCCommandLineDefines(const Name, CmdLine: string;
       controllerunitstr: string[20];
     end;
   const
-    ControllerTypes: array[0..430] of TControllerType =
+    ControllerTypes: array[0..532] of TControllerType =
      ((controllertypestr:'';                  controllerunitstr:''),
       (controllertypestr:'LPC810M021FN8';     controllerunitstr:'LPC8xx'),
-      (controllertypestr:'LPC811M001FDH16';   controllerunitstr:'LPC8xx'),
-      (controllertypestr:'LPC812M101FDH16';   controllerunitstr:'LPC8xx'),
-      (controllertypestr:'LPC812M101FD20';    controllerunitstr:'LPC8xx'),
-      (controllertypestr:'LPC812M101FDH20';   controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPC811M001JDH16';   controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPC812M101JD20';    controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPC812M101JDH16';   controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPC812M101JDH20';   controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPCXPRESSO812MAX';  controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPC812M101JTB16';   controllerunitstr:'LPC8xx'),
+      (controllertypestr:'LPC822M101JDH20';   controllerunitstr:'LPC82x'),
+      (controllertypestr:'LPC822M101JHI33';   controllerunitstr:'LPC82x'),
+      (controllertypestr:'LPC824M201JDH20';   controllerunitstr:'LPC82x'),
+      (controllertypestr:'LPC824M201JHI33';   controllerunitstr:'LPC82x'),
+      (controllertypestr:'LPCXPRESSO824MAX';  controllerunitstr:'LPC82x'),
+
       (controllertypestr:'LPC1110FD20';       controllerunitstr:'LPC11XX'),
       (controllertypestr:'LPC1111FDH20_002';  controllerunitstr:'LPC11XX'),
       (controllertypestr:'LPC1111FHN33_101';  controllerunitstr:'LPC11XX'),
@@ -6834,9 +7013,59 @@ function TDefinePool.CreateFPCCommandLineDefines(const Name, CmdLine: string;
       (controllertypestr:'STM32F107RC';       controllerunitstr:'STM32F10X_CL'),
       (controllertypestr:'STM32F107VB';       controllerunitstr:'STM32F10X_CL'),
       (controllertypestr:'STM32F107VC';       controllerunitstr:'STM32F10X_CL'),
-      (controllertypestr:'STM32F429XE';       controllerunitstr:'STM32F429'),
-      (controllertypestr:'STM32F429XG';       controllerunitstr:'STM32F429'),
-      (controllertypestr:'STM32F429XI';       controllerunitstr:'STM32F429'),
+      (controllertypestr:'STM32F401RB';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401VB';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401CC';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401RC';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401VC';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'DISCOVERYF401VC';   controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401CD';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401RD';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401VD';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401CE';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401RE';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'NUCLEOF401RE';      controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F401VE';       controllerunitstr:'STM32F401XX'),
+      (controllertypestr:'STM32F407VG';       controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'DISCOVERYF407VG';   controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'STM32F407IG';       controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'STM32F407ZG';       controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'STM32F407VE';       controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'STM32F407ZE';       controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'STM32F407IE';       controllerunitstr:'STM32F407XX'),
+      (controllertypestr:'STM32F411CC';       controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'STM32F411RC';       controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'STM32F411VC';       controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'STM32F411CE';       controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'STM32F411RE';       controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'NUCLEOF411RE';      controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'STM32F411VE';       controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'DISCOVERYF411VE';   controllerunitstr:'STM32F411XE'),
+      (controllertypestr:'STM32F429VG';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429ZG';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429IG';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429VI';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429ZI';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'DISCOVERYF429ZI';   controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429II';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429VE';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429ZE';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429IE';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429BG';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429BI';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429BE';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429NG';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429NI';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F429NE';       controllerunitstr:'STM32F429XX'),
+      (controllertypestr:'STM32F446MC';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446RC';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446VC';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446ZC';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446ME';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446RE';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'NUCLEOF446RE';      controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446VE';       controllerunitstr:'STM32F446XX'),
+      (controllertypestr:'STM32F446ZE';       controllerunitstr:'STM32F446XX'),
       (controllertypestr:'STM32F745XE';       controllerunitstr:'STM32F745'),
       (controllertypestr:'STM32F745XG';       controllerunitstr:'STM32F745'),
       (controllertypestr:'STM32F746XE';       controllerunitstr:'STM32F746'),
@@ -6916,9 +7145,54 @@ function TDefinePool.CreateFPCCommandLineDefines(const Name, CmdLine: string;
       (controllertypestr:'XMC4502X768';       controllerunitstr:'XMC4502'),
       (controllertypestr:'XMC4504X512';       controllerunitstr:'XMC4504'),
       (controllertypestr:'ALLWINNER_A20';     controllerunitstr:'ALLWINNER_A20'),
-      (controllertypestr:'MK20DX128XXX7';     controllerunitstr:'MK20D7'),
-      (controllertypestr:'MK20DX256XXX7';     controllerunitstr:'MK20D7'),
-      (controllertypestr:'MK20DX64XXX7';      controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX128VFM5';     controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX128VFT5';     controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX128VLF5';     controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX128VLH5';     controllerunitstr:'MK20D5'),
+      (controllertypestr:'TEENSY30'     ;     controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX128VMP5';     controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX32VFM5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX32VFT5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX32VLF5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX32VLH5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX32VMP5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX64VFM5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX64VFT5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX64VLF5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX64VLH5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX64VMP5';      controllerunitstr:'MK20D5'),
+      (controllertypestr:'MK20DX128VLH7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX128VLK7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX128VLL7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX128VMC7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX256VLH7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX256VLK7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX256VLL7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX256VMC7';     controllerunitstr:'MK20D7'),
+      (controllertypestr:'TEENSY31';          controllerunitstr:'MK20D7'),
+      (controllertypestr:'TEENSY32';          controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX64VLH7';      controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX64VLK7';      controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK20DX64VMC7';      controllerunitstr:'MK20D7'),
+      (controllertypestr:'MK22FN512CAP12';    controllerunitstr:'MK22F51212'),
+      (controllertypestr:'MK22FN512CBP12';    controllerunitstr:'MK22F51212'),
+      (controllertypestr:'MK22FN512VDC12';    controllerunitstr:'MK22F51212'),
+      (controllertypestr:'MK22FN512VLH12';    controllerunitstr:'MK22F51212'),
+      (controllertypestr:'MK22FN512VLL12';    controllerunitstr:'MK22F51212'),
+      (controllertypestr:'MK22FN512VMP12';    controllerunitstr:'MK22F51212'),
+      (controllertypestr:'FREEDOM_K22F';      controllerunitstr:'MK22F51212'),
+      (controllertypestr:'MK64FN1M0VDC12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FN1M0VLL12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'FREEDOM_K64F';      controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FN1M0VLQ12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FN1M0VMD12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FX512VDC12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FX512VLL12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FX512VLQ12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'MK64FX512VMD12';    controllerunitstr:'MK64F12'),
+      (controllertypestr:'ATSAM3X8E';         controllerunitstr:'SAM3X8E'),
+      (controllertypestr:'ARDUINO_DUE';       controllerunitstr:'SAM3X8E'),
+      (controllertypestr:'FLIP_N_CLICK';      controllerunitstr:'SAM3X8E'),
       (controllertypestr:'THUMB2_BARE';       controllerunitstr:'THUMB2_BARE'),
       (controllertypestr:'PIC32MX110F016B';   controllerunitstr:'PIC32MX1xxFxxxB'),
       (controllertypestr:'PIC32MX110F016C';   controllerunitstr:'PIC32MX1xxFxxxC'),
@@ -7672,7 +7946,7 @@ begin
   for i:=1 to Cnt do begin
     SubPath:=Path+'Defines/Macro'+IntToStr(i)+'/';
     DefineName:=UpperCaseStr(XMLConfig.GetValue(SubPath+'Name',''));
-    if (DefineName='') or (not IsValidIdent(DefineName)) then begin
+    if not IsValidIdent(DefineName) then begin
       DebugLn(['Warning: [TFPCTargetConfigCache.LoadFromXMLConfig] invalid define name ',DefineName]);
       continue;
     end;
@@ -7690,7 +7964,7 @@ begin
       StartPos:=1;
       while (p<=length(s)) and (s[p]<>';') do inc(p);
       DefineName:=copy(s,StartPos,p-StartPos);
-      if (DefineName<>'') and IsValidIdent(DefineName) then begin
+      if IsValidIdent(DefineName) then begin
         if Undefines=nil then
           Undefines:=TStringToStringTree.Create(false);
         Undefines[DefineName]:='';
@@ -7726,7 +8000,8 @@ begin
   List:=TStringList.Create;
   UnitList:=nil;
   try
-    s:=XMLConfig.GetValue(Path+'Units/Value','');
+    SubPath:=Path+'Units/Value';
+    s:=XMLConfig.GetValue(SubPath,'');
     List.Delimiter:=';';
     List.StrictDelimiter:=true;
     List.DelimitedText:=s;
@@ -7734,8 +8009,8 @@ begin
     for i:=0 to UnitList.Count-1 do begin
       Filename:=TrimFilename(UnitList[i]);
       Unit_Name:=ExtractFileNameOnly(Filename);
-      if (Unit_Name='') or not IsValidIdent(Unit_Name) then begin
-        DebugLn(['Warning: [TFPCTargetConfigCache.LoadFromXMLConfig] invalid unitname: ',s]);
+      if (Unit_Name='') or not IsDottedIdentifier(Unit_Name) then begin
+        DebugLn(['Warning: [TFPCTargetConfigCache.LoadFromXMLConfig] invalid unitname "',Unit_Name,'" in "',XMLConfig.Filename,'" at "',SubPath,'"']);
         continue;
       end;
       if Units=nil then
@@ -7782,7 +8057,7 @@ begin
     Node:=Defines.Tree.FindLowest;
     while Node<>nil do begin
       Item:=PStringToStringTreeItem(Node.Data);
-      if (Item^.Name<>'') and IsValidIdent(Item^.Name) then begin
+      if IsValidIdent(Item^.Name) then begin
         inc(Cnt);
         SubPath:=Path+'Defines/Macro'+IntToStr(Cnt)+'/';
         XMLConfig.SetDeleteValue(SubPath+'Name',Item^.Name,'');
@@ -8034,8 +8309,9 @@ begin
           ConfigFiles.Add(Filename,CfgFileExists,CfgFileDate);
         end;
       // gather all units in all unit search paths
-      if (UnitPaths<>nil) and (UnitPaths.Count>0) then
-        Units:=GatherUnitsInSearchPaths(UnitPaths,OnProgress)
+      if (UnitPaths<>nil) and (UnitPaths.Count>0) then begin
+        Units:=GatherUnitsInSearchPaths(UnitPaths,OnProgress,true);
+      end
       else begin
         if CTConsoleVerbosity>=-1 then
           debugln(['Warning: [TFPCTargetConfigCache.Update] no unit paths: ',Compiler,' ',ExtraOptions]);
@@ -9301,12 +9577,13 @@ var
 begin
   Result:='';
   {$IFDEF ShowTriedUnits}
-  debugln(['TFPCUnitSetCache.GetUnitSrcFile Unit="',AnUnitName,'" MustHavePPU=',MustHavePPU,' SkipPPUCheckIfNoneExists=',SkipPPUCheckIfNoneExists]);
+  debugln(['TFPCUnitSetCache.GetUnitSrcFile Unit="',AnUnitName,'" SrcSearchRequiresPPU=',SrcSearchRequiresPPU,' SkipPPUCheckIfTargetIsSourceOnly=',SkipPPUCheckIfTargetIsSourceOnly]);
   {$ENDIF}
   Tree:=GetUnitToSourceTree(false);
   ConfigCache:=GetConfigCache(false);
   if (ConfigCache.Units<>nil) then begin
     UnitInFPCPath:=ConfigCache.Units[AnUnitName];
+    //if Pos('lazmkunit',AnUnitName)>0 then debugln(['TFPCUnitSetCache.GetUnitSrcFile UnitInFPCPath=',UnitInFPCPath]);
     if (CompareFileExt(UnitInFPCPath,'ppu',false)=0) then begin
       // there is a ppu
     end else if UnitInFPCPath<>'' then begin

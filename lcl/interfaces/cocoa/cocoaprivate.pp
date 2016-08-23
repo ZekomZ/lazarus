@@ -47,7 +47,7 @@ type
 
   ICommonCallback = interface
     // mouse events
-    function MouseUpDownEvent(Event: NSEvent): Boolean;
+    function MouseUpDownEvent(Event: NSEvent; AForceAsMouseUp: Boolean = False): Boolean;
     procedure MouseClick;
     function MouseMove(Event: NSEvent): Boolean;
     function KeyEvent(Event: NSEvent; AForceAsKeyDown: Boolean = False): Boolean;
@@ -111,7 +111,6 @@ type
   { LCLViewExtension }
 
   LCLViewExtension = objccategory(NSView)
-
     function lclInitWithCreateParams(const AParams: TCreateParams): id; message 'lclInitWithCreateParams:';
 
     function lclIsVisible: Boolean; message 'lclIsVisible'; reintroduce;
@@ -276,6 +275,7 @@ type
   TCocoaTextView = objcclass(NSTextView)
   public
     callback: ICommonCallback;
+    FEnabled: Boolean;
     function acceptsFirstResponder: Boolean; override;
     function becomeFirstResponder: Boolean; override;
     function resignFirstResponder: Boolean; override;
@@ -287,6 +287,21 @@ type
     procedure keyDown(event: NSEvent); override;
     procedure keyUp(event: NSEvent); override;
     procedure flagsChanged(event: NSEvent); override;
+    // mouse
+    procedure mouseDown(event: NSEvent); override;
+    procedure mouseUp(event: NSEvent); override;
+    {procedure rightMouseDown(event: NSEvent); override;
+    procedure rightMouseUp(event: NSEvent); override;
+    procedure otherMouseDown(event: NSEvent); override;
+    procedure otherMouseUp(event: NSEvent); override;
+
+    procedure mouseDragged(event: NSEvent); override;
+    procedure mouseEntered(event: NSEvent); override;
+    procedure mouseExited(event: NSEvent); override;
+    procedure mouseMoved(event: NSEvent); override;}
+    //
+    function lclIsEnabled: Boolean; override;
+    procedure lclSetEnabled(AEnabled: Boolean); override;
   end;
 
   { TCocoaPanel }
@@ -1140,7 +1155,7 @@ var
   Msg: Cardinal;
   WP: WParam;
   LP: LParam;
-  Result: NSNumber;
+  ResultCode: NSNumber;
   Obj: NSObject;
 begin
   if event.type_ = NSApplicationDefined then
@@ -1154,13 +1169,16 @@ begin
       Msg := NSNumber(Message.objectForKey(NSMessageMsg)).unsignedLongValue;
       WP := NSNumber(Message.objectForKey(NSMessageWParam)).integerValue;
       LP := NSNumber(Message.objectForKey(NSMessageLParam)).integerValue;
-      // deliver message and set result
       Obj := NSObject(Handle);
+      // deliver message and set result if response requested
       // todo: check that Obj is still a valid NSView/NSWindow
-      Result := NSNumber.numberWithInteger(Obj.lclDeliverMessage(Msg, WP, LP));
-      Message.setObject_forKey(Result, NSMessageResult);
-      Result.release;
-    end;
+      ResultCode := NSNumber.numberWithInteger(Obj.lclDeliverMessage(Msg, WP, LP));
+      if event.data2 <> 0 then
+        Message.setObject_forKey(ResultCode, NSMessageResult)
+      else
+        Message.release;
+      //ResultCode.release;                   // will be auto-released
+     end;
   end
   else
     inherited sendEvent(event);
@@ -1380,7 +1398,7 @@ var
   Msg: Cardinal;
   WP: WParam;
   LP: LParam;
-  Result: NSNumber;
+  ResultCode: NSNumber;
   Obj: NSObject;
 begin
   if event.type_ = NSApplicationDefined then
@@ -1394,12 +1412,15 @@ begin
       Msg := NSNumber(Message.objectForKey(NSMessageMsg)).unsignedLongValue;
       WP := NSNumber(Message.objectForKey(NSMessageWParam)).integerValue;
       LP := NSNumber(Message.objectForKey(NSMessageLParam)).integerValue;
-      // deliver message and set result
+      // deliver message and set result if response requested
       Obj := NSObject(Handle);
       // todo: check that Obj is still a valid NSView/NSWindow
-      Result := NSNumber.numberWithInteger(Obj.lclDeliverMessage(Msg, WP, LP));
-      Message.setObject_forKey(Result, NSMessageResult);
-      Result.release;
+      ResultCode := NSNumber.numberWithInteger(Obj.lclDeliverMessage(Msg, WP, LP));
+      if event.data2 <> 0 then
+        Message.setObject_forKey(ResultCode, NSMessageResult)
+      else
+        Message.release;
+      //ResultCode.release;               // will be auto-released
     end;
   end
   else
@@ -1753,8 +1774,10 @@ end;
 
 procedure TCocoaButton.mouseDown(event: NSEvent);
 begin
-  if not callback.MouseUpDownEvent(event) then
-    inherited mouseDown(event);
+  callback.MouseUpDownEvent(event);
+  // We need to call the inherited regardless of the result of the call to
+  // MouseUpDownEvent otherwise mouse clicks don't work, see bug 30131
+  inherited mouseDown(event);
 end;
 
 procedure TCocoaButton.mouseDragged(event: NSEvent);
@@ -1940,6 +1963,37 @@ begin
   if not callback.resetCursorRects then
     inherited resetCursorRects;
 end;
+
+procedure TCocoaTextView.mouseDown(event: NSEvent);
+begin
+  inherited mouseDown(event);
+  if callback <> nil then
+  begin
+    callback.MouseUpDownEvent(event);
+    // Cocoa doesn't call mouseUp for NSTextView, so we have to emulate it here :(
+    // See bug 29000
+    callback.MouseUpDownEvent(event, True);
+  end;
+end;
+
+procedure TCocoaTextView.mouseUp(event: NSEvent);
+begin
+  inherited mouseUp(event);
+  if callback <> nil then
+    callback.MouseUpDownEvent(event);
+end;
+
+function TCocoaTextView.lclIsEnabled: Boolean;
+begin
+  Result := FEnabled;
+  if Result and CocoaWidgetSet.IsControlDisabledDueToModal(Self) then Result := False;
+end;
+
+procedure TCocoaTextView.lclSetEnabled(AEnabled: Boolean);
+begin
+  FEnabled := AEnabled;
+end;
+//
 
 { TCocoaSecureTextField }
 
@@ -2396,11 +2450,8 @@ end;
 
 procedure LCLViewExtension.lclRelativePos(var Left, Top: Integer);
 begin
-  with frame.origin do
-  begin
-    Left := Round(x);
-    Top := Round(y);
-  end;
+  Left := Round(frame.origin.x);
+  Top := Round(frame.origin.y);
 end;
 
 procedure LCLViewExtension.lclLocalToScreen(var X, Y:Integer);
@@ -2477,15 +2528,11 @@ var
   r: NSRect;
 begin
   r := bounds;
-  with Result do
-  begin
-    Left := 0;
-    Top := 0;
-    Right := Round(r.size.width);
-    Bottom := Round(r.size.height);
-  end;
+  Result.Left := 0;
+  Result.Top := 0;
+  Result.Right := Round(r.size.width);
+  Result.Bottom := Round(r.size.height);
 end;
-
 
 { LCLWindowExtension }
 
@@ -2619,13 +2666,10 @@ var
 begin
   wFrame := frame;
   cFrame := contentRectForFrameRect(wFrame);
-  with Result do
-  begin
-    Left := Round(cFrame.origin.x - wFrame.origin.x);
-    Top := Round(wFrame.origin.y + wFrame.size.height - cFrame.origin.y - cFrame.size.height);
-    Right := Left + Round(cFrame.size.width);
-    Bottom := Top + Round(cFrame.size.height);
-  end;
+  Result.Left := Round(cFrame.origin.x - wFrame.origin.x);
+  Result.Top := Round(wFrame.origin.y + wFrame.size.height - cFrame.origin.y - cFrame.size.height);
+  Result.Right := Result.Left + Round(cFrame.size.width);
+  Result.Bottom := Result.Top + Round(cFrame.size.height);
 end;
 
 { TCocoaListBox }
@@ -2716,8 +2760,9 @@ end;
 
 procedure TCocoaListBox.mouseDown(event: NSEvent);
 begin
-  if not Assigned(callback) or not callback.MouseUpDownEvent(event) then
-    inherited mouseDown(event);
+  if Assigned(callback) then callback.MouseUpDownEvent(event);
+  // Always call inherited, otherwise clicking stops working, see bug 30297
+  inherited mouseDown(event);
 end;
 
 procedure TCocoaListBox.rightMouseDown(event: NSEvent);

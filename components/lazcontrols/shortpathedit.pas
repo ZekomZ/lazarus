@@ -23,8 +23,6 @@ type
     property OnAcceptDirectory: TAcceptFileNameEvent read FOnAcceptDir write FonAcceptDir;
   end;
 
-procedure Register;
-
 implementation
 
 function TShortPathEdit.CreateDialog: TCommonDialog;
@@ -70,12 +68,6 @@ begin
       Directory:=D;
   end;
 end;
-
-procedure Register;
-begin
-  RegisterComponents('LazControls',[TShortPathEdit]);
-end;
-
 
 end.
 

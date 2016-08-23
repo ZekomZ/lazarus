@@ -1,6 +1,7 @@
 {
  **********************************************************************
-  This file is based on the FCL unit xmlwrite svn revision 15251.
+  This file is part of LazUtils.
+  It is based on the FCL unit xmlwrite svn revision 15251.
 
   See the file COPYING.FPC, included in this distribution,
   for details about the license.
@@ -24,7 +25,7 @@ unit laz2_XMLWrite;
 
 interface
 
-uses Classes, laz2_DOM, SysUtils, laz2_xmlutils, lazutf8classes;
+uses Classes, LazUTF8, laz2_DOM, SysUtils, laz2_xmlutils, lazutf8classes;
 
 type
   TXMLWriterFlag = (
@@ -45,9 +46,6 @@ procedure WriteXML(Element: TDOMNode; AStream: TStream; Flags: TXMLWriterFlags =
 // ===================================================================
 
 implementation
-
-uses
-  LazUTF8;
 
 type
   TXMLWriter = class;

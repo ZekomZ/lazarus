@@ -1,12 +1,6 @@
 {
- /***************************************************************************
-                                FPCAdds.pas
-                                -----------
-
- ***************************************************************************/
-
  *****************************************************************************
-  This file is part of the Lazarus Component Library (LCL)
+  This file is part of LazUtils.
 
   See the file COPYING.modifiedLGPL.txt, included in this distribution,
   for details about the license.
@@ -15,6 +9,8 @@
 unit FPCAdds;
 
 {$mode objfpc}{$H+}{$inline on}
+
+{$i lazutils_defines.inc}
 
 interface
 
@@ -64,7 +60,7 @@ begin
 {$ENDIF}
 end;
 
-{$IF (FPC_FULLVERSION >= 30000) AND NOT DEFINED(DisableUTF8RTL)}
+{$ifdef UTF8_RTL}
 initialization
   SetMultiByteConversionCodePage(CP_UTF8);
   // SetMultiByteFileSystemCodePage(CP_UTF8); not needed, this is the default under Windows

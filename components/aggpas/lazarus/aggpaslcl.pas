@@ -4,6 +4,7 @@
 
 unit AggPasLCL;
 
+{$warn 5023 off : no warning about unused units}
 interface
 
 uses
@@ -53,14 +54,8 @@ uses
   agg_vpgen_clip_polygon, agg_vpgen_clip_polyline, agg_vpgen_segmentator, 
   agg_svg_exception, agg_svg_parser_lcl, agg_svg_path_renderer, 
   agg_svg_path_tokenizer, agg_color_conv, expat, expat_basics, expat_external, 
-  xmlrole, xmltok, LazarusPackageIntf;
+  xmlrole, xmltok;
 
 implementation
 
-procedure Register;
-begin
-end;
-
-initialization
-  RegisterPackage('AggPasLCL', @Register);
 end.

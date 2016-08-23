@@ -491,6 +491,14 @@ msgstr "צור אירוע ברירת מחדל"
 msgid "Create new field and add it at current position"
 msgstr "צור שדה חדש והוסף אותו במיקום הנוכחי"
 
+#: objinspstrconsts.oiscurrentparent
+msgid "Current parent"
+msgstr ""
+
+#: objinspstrconsts.oiscurrentparents
+msgid "Current parents"
+msgstr ""
+
 #: objinspstrconsts.oiscutcomponents
 msgctxt "objinspstrconsts.oiscutcomponents"
 msgid "Cu&t"
@@ -781,6 +789,14 @@ msgstr "בחר הכל"
 msgid "Select All Fields"
 msgstr "בחר את כל השדות"
 
+#: objinspstrconsts.oisselectedcontrol
+msgid "Selected control"
+msgstr ""
+
+#: objinspstrconsts.oisselectedcontrols
+msgid "Selected controls"
+msgstr ""
+
 #: objinspstrconsts.oisselectedproperties
 msgid "&Selected Properties"
 msgstr ""
@@ -816,6 +832,10 @@ msgstr "קבע כברירת מחדל: s%"
 
 #: objinspstrconsts.oissettodefaulthint
 msgid "Set property value to Default"
+msgstr ""
+
+#: objinspstrconsts.oisshowclasses
+msgid "Show classes"
 msgstr ""
 
 #: objinspstrconsts.oisshowcomponenttree
@@ -1369,9 +1389,17 @@ msgstr "ללא"
 msgid "Add Images"
 msgstr "הוסף דמויות"
 
+#: objinspstrconsts.sccsiledtopendialogn
+msgid "New Image"
+msgstr ""
+
 #: objinspstrconsts.sccsiledtransparentcolor
 msgid "Transparent Color:"
 msgstr "צבע שקוף:"
+
+#: objinspstrconsts.sccsiledtreplace
+msgid "&Replace ..."
+msgstr ""
 
 #: objinspstrconsts.sccsiledtsave
 #, fuzzy
@@ -1608,6 +1636,10 @@ msgstr "מקש גרירה"
 #: objinspstrconsts.s_addassingle
 msgid "Add as single"
 msgstr "הוסף כיחיד"
+
+#: objinspstrconsts.s_confirm_clear
+msgid "Are you sure to clear image list?"
+msgstr ""
 
 #: objinspstrconsts.s_splitimage
 msgid "Split image"

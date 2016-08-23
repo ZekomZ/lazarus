@@ -134,6 +134,7 @@ resourcestring
   sccsILEdtGrpLCaption = 'Images';
   sccsILEdtGrpRCaption = 'Selected Image';
   sccsILEdtAdd         = '&Add ...';
+  sccsILEdtReplace     = '&Replace ...';
   sccsILEdtDelete      = '&Delete';
   sccsILEdtApply       = '&Apply';
   sccsILEdtClear       = '&Clear';
@@ -158,6 +159,7 @@ resourcestring
   rscdVisible          = 'Visible';
   rscdAutoSize         = 'Auto Size';
   sccsILEdtOpenDialog  = 'Add Images';
+  sccsILEdtOpenDialogN = 'New Image';
   sccsILEdtSaveDialog  = 'Save Image';
   
   // StringGrid Editor
@@ -379,6 +381,7 @@ resourcestring
 
   // image list editor
   s_SuggestSplitImage = 'Do you want to split the image?';
+  s_Confirm_Clear = 'Are you sure to clear image list?';
   s_AddAsSingle = 'Add as single';
   s_SplitImage = 'Split image';
   
@@ -437,6 +440,13 @@ resourcestring
   oisChangeClass = 'Change Class ...';
   oisChangeParent = 'Change Parent';
   lisUnableToFindParserForTool = 'Unable to find parser for tool "%s"';
+
+  // TChangeParentDlg
+  oisShowClasses = 'Show classes';
+  oisSelectedControl = 'Selected control';
+  oisSelectedControls = 'Selected controls';
+  oisCurrentParent = 'Current parent';
+  oisCurrentParents = 'Current parents';
 
   // Dbgrid Columns editor
   dceAddFields = 'Add Fields';

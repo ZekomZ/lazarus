@@ -1,3 +1,11 @@
+{
+ *****************************************************************************
+  This file is part of LazUtils.
+
+  See the file COPYING.modifiedLGPL.txt, included in this distribution,
+  for details about the license.
+ *****************************************************************************
+}
 unit LazUTF8SysUtils;
 
 {$mode objfpc}{$H+}
@@ -29,7 +37,7 @@ function NowUTC: TDateTime;
 var
   SystemTime: TSystemTime;
 begin
-  windows.GetSystemTime(SystemTime);
+  windows.GetSystemTime(SystemTime{%H-});
   result := systemTimeToDateTime(SystemTime);
 end;
 

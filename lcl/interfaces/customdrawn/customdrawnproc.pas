@@ -10,7 +10,7 @@ uses
   Types, Classes, SysUtils,
   fpimage, fpcanvas, Math,
   // LazUtils
-  fileutil,
+  LazFileUtils,
   {$ifndef CD_UseNativeText}
   // LazFreeType
   TTTypes, LazFreeTypeIntfDrawer, LazFreeType, EasyLazFreeType, IniFiles,
@@ -473,6 +473,7 @@ var
   lBaseWindowOrg: TPoint;
   lControlStateEx: TCDControlStateEx;
   lDrawControl: Boolean;
+  lRegion:TLazRegionWithChilds;
 begin
   Result := False;
 
@@ -504,7 +505,9 @@ begin
   ACanvas.Clipping := True;
   ACDWinControl.Region.Rect := Bounds(lBaseWindowOrg.X, lBaseWindowOrg.Y - ACDForm.ScrollY,
     lWinControl.Width, lWinControl.Height);
-  ACanvas.ClipRegion := ACDWinControl.Region;
+  lRegion := TLazRegionWithChilds.Create;
+  lRegion.Assign(ACDWinControl.Region);
+  ACanvas.ClipRegion := lRegion;
 
   lControlCanvas := ACanvas;
 
@@ -534,8 +537,8 @@ begin
         lControlStateEx.Font := lWinControl.Font;
         lControlStateEx.Caption := lWinControl.Caption;
         lControlStateEx.ParentRGBColor := lWinControl.GetRGBColorResolvingParent();
-        GetDefaultDrawer().DrawGroupBox(lControlCanvas, Size(lWinControl.Width, lWinControl.Height),
-          [], lControlStateEx);
+        GetDefaultDrawer().DrawGroupBox(lControlCanvas, Point(0,0),
+          Size(lWinControl.Width, lWinControl.Height), [], lControlStateEx);
       finally
         lControlStateEx.Free;
         lControlCanvas.RestoreState(-1);

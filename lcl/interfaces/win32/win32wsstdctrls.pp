@@ -149,6 +149,8 @@ type
   { TWin32WSCustomEdit }
 
   TWin32WSCustomEdit = class(TWSCustomEdit)
+  private
+    class procedure ApplyMargins(const AWinControl: TWinControl);
   published
     class function CreateHandle(const AWinControl: TWinControl;
           const AParams: TCreateParams): HWND; override;
@@ -174,6 +176,7 @@ type
     class procedure SetSelStart(const ACustomEdit: TCustomEdit; NewStart: integer); override;
     class procedure SetSelLength(const ACustomEdit: TCustomEdit; NewLength: integer); override;
     class procedure SetText(const AWinControl: TWinControl; const AText: string); override;
+    class procedure SetFont(const AWinControl: TWinControl; const AFont: TFont); override;
 
     class procedure Cut(const ACustomEdit: TCustomEdit); override;
     class procedure Copy(const ACustomEdit: TCustomEdit); override;
@@ -195,6 +198,7 @@ type
     class procedure SetCaretPos(const ACustomEdit: TCustomEdit; const NewPos: TPoint); override;
     class procedure SetScrollbars(const ACustomMemo: TCustomMemo; const NewScrollbars: TScrollStyle); override;
     class procedure SetWordWrap(const ACustomMemo: TCustomMemo; const NewWordWrap: boolean); override;
+    class procedure ScrollBy(const AWinControl: TWinControl; DeltaX, DeltaY: integer); override;
   end;
 
   { TWin32WSEdit }
@@ -1102,83 +1106,31 @@ end;
 
 function EditGetSelStart(WinHandle: HWND): integer;
 begin
-  {$ifdef WindowsUnicodeSupport}
-  if UnicodeEnabledOS then
-  begin
-    Windows.SendMessageW(WinHandle, EM_GETSEL, Windows.WPARAM(@Result), 0);
-  end
-  else
-  begin
-    Windows.SendMessage(WinHandle, EM_GETSEL, Windows.WPARAM(@Result), 0);
-  end;
-  {$else}
-  Windows.SendMessage(WinHandle, EM_GETSEL, Windows.WPARAM(@Result), 0);
-  {$endif}
+  Windows.SendMessageW(WinHandle, EM_GETSEL, Windows.WPARAM(@Result), 0);
 end;
 
 function EditGetSelLength(WinHandle: HWND): integer;
 var
   startpos, endpos: integer;
 begin
-  {$ifdef WindowsUnicodeSupport}
-  if UnicodeEnabledOS then
-  begin
-    Windows.SendMessageW(WinHandle, EM_GETSEL, Windows.WPARAM(@startpos), Windows.LPARAM(@endpos));
-  end
-  else
-  begin
-    Windows.SendMessage(WinHandle, EM_GETSEL, Windows.WPARAM(@startpos), Windows.LPARAM(@endpos));
-  end;
-  {$else}
-  Windows.SendMessage(WinHandle, EM_GETSEL, Windows.WPARAM(@startpos), Windows.LPARAM(@endpos));
-  {$endif}
+  Windows.SendMessageW(WinHandle, EM_GETSEL, Windows.WPARAM(@startpos), Windows.LPARAM(@endpos));
   Result := endpos - startpos;
 end;
 
 procedure EditSetSelStart(WinHandle: HWND; NewStart: integer);
 begin
-  {$ifdef WindowsUnicodeSupport}
-  if UnicodeEnabledOS then
-  begin
-    Windows.SendMessageW(WinHandle, EM_SETSEL, Windows.WParam(NewStart), Windows.LParam(NewStart));
-    // scroll caret into view
-    Windows.SendMessageW(WinHandle, EM_SCROLLCARET, 0, 0);
-  end
-  else
-  begin
-    Windows.SendMessage(WinHandle, EM_SETSEL, Windows.WParam(NewStart), Windows.LParam(NewStart));
-    // scroll caret into view
-    Windows.SendMessage(WinHandle, EM_SCROLLCARET, 0, 0);
-  end;
-  {$else}
-  Windows.SendMessage(WinHandle, EM_SETSEL, Windows.WParam(NewStart), Windows.LParam(NewStart));
+  Windows.SendMessageW(WinHandle, EM_SETSEL, Windows.WParam(NewStart), Windows.LParam(NewStart));
   // scroll caret into view
-  Windows.SendMessage(WinHandle, EM_SCROLLCARET, 0, 0);
-  {$endif}
+  Windows.SendMessageW(WinHandle, EM_SCROLLCARET, 0, 0);
 end;
 
 procedure EditSetSelLength(WinHandle: HWND; NewLength: integer);
 var
   startpos, endpos: integer;
 begin
-  {$ifdef WindowsUnicodeSupport}
-   if UnicodeEnabledOS then
-   begin
-     Windows.SendMessageW(WinHandle, EM_GETSEL, Windows.WParam(@startpos), Windows.LParam(@endpos));
-     endpos := startpos + NewLength;
-     Windows.SendMessageW(WinHandle, EM_SETSEL, Windows.WParam(startpos), Windows.LParam(endpos));
-   end
-   else
-   begin
-     Windows.SendMessage(WinHandle, EM_GETSEL, Windows.WParam(@startpos), Windows.LParam(@endpos));
-     endpos := startpos + NewLength;
-     Windows.SendMessage(WinHandle, EM_SETSEL, Windows.WParam(startpos), Windows.LParam(endpos));
-   end;
-   {$else}
-   Windows.SendMessage(WinHandle, EM_GETSEL, Windows.WParam(@startpos), Windows.LParam(@endpos));
-   endpos := startpos + NewLength;
-   Windows.SendMessage(WinHandle, EM_SETSEL, Windows.WParam(startpos), Windows.LParam(endpos));
-   {$endif}
+ Windows.SendMessageW(WinHandle, EM_GETSEL, Windows.WParam(@startpos), Windows.LParam(@endpos));
+ endpos := startpos + NewLength;
+ Windows.SendMessageW(WinHandle, EM_SETSEL, Windows.WParam(startpos), Windows.LParam(endpos));
 end;
 
 { TWin32WSCustomEdit }
@@ -1201,6 +1153,8 @@ begin
   // edit is not a transparent control -> no need for parentpainting
   Params.WindowInfo^.needParentPaint := false;
   Result := Params.Window;
+
+  ApplyMargins(AWinControl);
 end;
 
 class function TWin32WSCustomEdit.GetCanUndo(const ACustomEdit: TCustomEdit): Boolean;
@@ -1285,6 +1239,15 @@ begin
   // nothing to do, SetPasswordChar will do the work
 end;
 
+class procedure TWin32WSCustomEdit.SetFont(const AWinControl: TWinControl;
+  const AFont: TFont);
+begin
+  if not WSCheckHandleAllocated(AWinControl, 'SetFont') then Exit;
+  TWin32WSWinControl.SetFont(AWinControl, AFont);
+
+  ApplyMargins(AWinControl);
+end;
+
 class procedure TWin32WSCustomEdit.SetHideSelection(const ACustomEdit: TCustomEdit; NewHideSelection: Boolean);
 var
   CurrentStyle: DWord;
@@ -1348,6 +1311,12 @@ end;
 class procedure TWin32WSCustomEdit.Cut(const ACustomEdit: TCustomEdit);
 begin
   SendMessage(ACustomEdit.Handle, WM_CUT, 0, 0)
+end;
+
+class procedure TWin32WSCustomEdit.ApplyMargins(const AWinControl: TWinControl);
+begin
+  if (WindowsVersion >= wv2000) and AWinControl.HandleAllocated then
+    SendMessage(AWinControl.Handle, EM_SETMARGINS, EC_LEFTMARGIN or EC_RIGHTMARGIN, 0);
 end;
 
 class procedure TWin32WSCustomEdit.Copy(const ACustomEdit: TCustomEdit);
@@ -1460,6 +1429,12 @@ class procedure TWin32WSCustomMemo.SetWordWrap(const ACustomMemo: TCustomMemo; c
 begin
   // TODO: check if can be done without recreation
   RecreateWnd(ACustomMemo);
+end;
+
+class procedure TWin32WSCustomMemo.ScrollBy(const AWinControl: TWinControl;
+  DeltaX, DeltaY: integer);
+begin
+  SendMessage(AWinControl.Handle, EM_LINESCROLL, -DeltaX, -DeltaY);
 end;
 
 { TWin32WSCustomStaticText }

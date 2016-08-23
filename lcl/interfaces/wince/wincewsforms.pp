@@ -34,8 +34,6 @@ type
 
   TWinCEWSScrollingWinControl = class(TWSScrollingWinControl)
   published
-    class procedure ScrollBy(const AWinControl: TScrollingWinControl;
-      const DeltaX, DeltaY: integer); override;
   end;
 
   { TWinCEWSScrollBox }
@@ -147,26 +145,6 @@ begin
   Result := Params.Window;
 end;
 
-{ TWinCEWSScrollingWinControl }
-
-class procedure TWinCEWSScrollingWinControl.ScrollBy(const AWinControl: TScrollingWinControl;
-  const DeltaX, DeltaY: integer);
-var
-  rgn: HRGN;
-  rect: trect;
-begin
-  rgn := 0; //roozbeh : seems to be ok?
-  // GetClipRgn(AWinControl.Handle,rgn);
-  // roozbeh:which flags really are required?!
-  if Windows.IsWindowVisible(AWinControl.Handle) then
-    {$ifdef win32}
-    ScrollWindowPtr(AWinControl.Handle, DeltaX, DeltaY, nil, nil);
-    {$else}
-    ScrollWindowPtr(AWinControl.Handle, DeltaX, DeltaY, nil, nil,
-      rgn, nil, SW_INVALIDATE or SW_ERASE or SW_SCROLLCHILDREN);
-    {$endif}
-end;
-
 { TWinCEWSCustomForm }
 
 class function TWinCEWSCustomForm.CalcBorderIconsFlags(const AForm: TCustomForm): dword;
@@ -252,6 +230,8 @@ begin
   with Params do
   begin
     // Different from win32
+    if (AParams.Style and WS_CHILD) = 0 then // remove parent for stand-alone forms because it seems to be unsupported on WinCE
+      Parent := 0;
     SubClassWndProc := nil; // Otherwise crash in wince, works in win32
     BorderStyle := TCustomForm(AWinControl).BorderStyle;
 

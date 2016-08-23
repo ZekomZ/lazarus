@@ -410,6 +410,12 @@ begin
   if Assigned(OnClose) then OnClose(Self);
 end;
 
+procedure TFindDialog.DoShowForm(Sender: TObject);
+begin
+  if csDesigning in ComponentState then exit;
+  if Assigned(OnShow) then OnShow(Self);
+end;
+
 function TFindDialog.GetFindText: string;
 begin
   Result:=FFindText;
@@ -434,7 +440,8 @@ procedure TFindDialog.SetFindText(const AValue: string);
 begin
   if FFindText = AValue then exit;
   FFindText:=AValue;
-  TFindDialogForm(FFindForm).EditFind.Text := AValue;
+  If Assigned(FFindForm) then
+    TFindDialogForm(FFindForm).EditFind.Text := AValue;
 end;
 
 procedure TFindDialog.SetLeft(const AValue: Integer);
@@ -606,7 +613,7 @@ begin
 
     SetFormValues;
     FFindForm.OnClose:=@DoCloseForm;
-    FFindForm.OnShow := Self.OnShow;
+    FFindForm.OnShow := @DoShowForm;
     FFindForm.HelpContext:=HelpContext;
     FFindForm.Caption:=Title;
     FFindForm.Show;

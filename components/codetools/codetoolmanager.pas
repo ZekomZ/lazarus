@@ -48,7 +48,7 @@ uses
   PPUCodeTools, LFMTrees, DirectivesTree, CodeCompletionTemplater,
   PascalParserTool, CodeToolsConfig, CustomCodeTool, FindDeclarationTool,
   IdentCompletionTool, StdCodeTools, ResourceCodeTool, CodeToolsStructs,
-  CTUnitGraph, ExtractProcTool, LazDbgLog;
+  CTUnitGraph, ExtractProcTool, LazDbgLog, CodeCompletionTool;
 
 type
   TCodeToolManager = class;
@@ -114,6 +114,7 @@ type
     FOnFindDefineProperty: TOnFindDefineProperty;
     FOnGetIndenterExamples: TOnGetFABExamples;
     FOnGetMethodName: TOnGetMethodname;
+    FOnRescanFPCDirectoryCache: TNotifyEvent;
     FOnScannerInit: TOnScannerInit;
     FOnSearchUsedUnit: TOnSearchUsedUnit;
     FResourceTool: TResourceCodeTool;
@@ -129,6 +130,7 @@ type
     FWriteLockCount: integer;// Set/Unset counter
     FWriteLockStep: integer; // current write lock ID
     FHandlers: array[TCodeToolManagerHandler] of TMethodList;
+    procedure DoOnRescanFPCDirectoryCache(Sender: TObject);
     function GetBeautifier: TBeautifyCodeOptions; inline;
     function DoOnScannerGetInitValues(Scanner: TLinkScanner; Code: Pointer;
       out AChangeStep: integer): TExpressionEvaluator;
@@ -238,6 +240,7 @@ type
                                  out ListOfCodeBuffer: TFPList): boolean;
     property OnSearchUsedUnit: TOnSearchUsedUnit
                                  read FOnSearchUsedUnit write FOnSearchUsedUnit;
+    property OnRescanFPCDirectoryCache: TNotifyEvent read FOnRescanFPCDirectoryCache write FOnRescanFPCDirectoryCache;
 
     // initializing single scanner
     property OnScannerInit: TOnScannerInit read FOnScannerInit write FOnScannerInit;
@@ -394,6 +397,8 @@ type
           const NewSrc: string = ''): boolean; deprecated;
     function AddIncludeDirectiveForInit(Code: TCodeBuffer; const Filename: string;
           const NewSrc: string = ''): boolean;
+    function AddUnitWarnDirective(Code: TCodeBuffer; WarnID, Comment: string;
+          TurnOn: boolean): boolean;
     function RemoveDirective(Code: TCodeBuffer; NewX, NewY: integer;
           RemoveEmptyIFs: boolean): boolean;
     function FixIncludeFilenames(Code: TCodeBuffer; Recursive: boolean;
@@ -405,9 +410,11 @@ type
 
     // keywords and comments
     function IsKeyword(Code: TCodeBuffer; const KeyWord: string): boolean;
-    function ExtractCodeWithoutComments(Code: TCodeBuffer): string;
+    function ExtractCodeWithoutComments(Code: TCodeBuffer;
+          KeepDirectives: boolean = false;
+          KeepVerbosityDirectives: boolean = false): string;
     function GetPasDocComments(Code: TCodeBuffer; X, Y: integer;
-                               out ListOfPCodeXYPosition: TFPList): boolean;
+          out ListOfPCodeXYPosition: TFPList): boolean;
 
     // blocks (e.g. begin..end, case..end, try..finally..end, repeat..until)
     function FindBlockCounterPart(Code: TCodeBuffer; X,Y: integer;
@@ -550,13 +557,13 @@ type
           out Operand: string; ResolveProperty: Boolean): Boolean;
 
     // code completion = auto class completion, auto forward proc completion,
-    //             local var assignment completion, event assignment completion
+    //             (local) var assignment completion, event assignment completion
     function CompleteCode(Code: TCodeBuffer; X,Y,TopLine: integer;
           out NewCode: TCodeBuffer;
-          out NewX, NewY, NewTopLine: integer): boolean;
+          out NewX, NewY, NewTopLine: integer;Interactive: Boolean): boolean;
     function CreateVariableForIdentifier(Code: TCodeBuffer; X,Y,TopLine: integer;
           out NewCode: TCodeBuffer;
-          out NewX, NewY, NewTopLine: integer): boolean;
+          out NewX, NewY, NewTopLine: integer; Interactive: Boolean): boolean;
     function AddMethods(Code: TCodeBuffer; X,Y, TopLine: integer;
           ListOfPCodeXYPosition: TFPList;
           const VirtualToOverride: boolean;
@@ -2616,7 +2623,7 @@ begin
     Result:=true;
     exit;
   end;
-  if (NewIdentifier='') or (not IsValidIdent(NewIdentifier)) then exit;
+  if not IsValidIdent(NewIdentifier) then exit;
 
   ClearCurCodeTool;
   SourceChangeCache.Clear;
@@ -3280,6 +3287,21 @@ begin
   end;
 end;
 
+function TCodeToolManager.AddUnitWarnDirective(Code: TCodeBuffer; WarnID,
+  Comment: string; TurnOn: boolean): boolean;
+begin
+  Result:=false;
+  {$IFDEF CTDEBUG}
+  DebugLn(['TCodeToolManager.AddUnitWarnDirective A ',Code.Filename,' aParam="',aParam,'" TurnOn=',TurnOn]);
+  {$ENDIF}
+  if not InitCurCodeTool(Code) then exit;
+  try
+    Result:=FCurCodeTool.AddUnitWarnDirective(WarnID,Comment,TurnOn,SourceChangeCache);
+  except
+    on e: Exception do Result:=HandleException(e);
+  end;
+end;
+
 function TCodeToolManager.RemoveDirective(Code: TCodeBuffer; NewX,
   NewY: integer; RemoveEmptyIFs: boolean): boolean;
 var
@@ -3447,10 +3469,12 @@ begin
   end;
 end;
 
-function TCodeToolManager.ExtractCodeWithoutComments(Code: TCodeBuffer): string;
+function TCodeToolManager.ExtractCodeWithoutComments(Code: TCodeBuffer;
+  KeepDirectives: boolean; KeepVerbosityDirectives: boolean): string;
 begin
   Result:=CleanCodeFromComments(Code.Source,
-                                GetNestedCommentsFlagForFile(Code.Filename));
+          GetNestedCommentsFlagForFile(Code.Filename),KeepDirectives,
+          KeepVerbosityDirectives);
 end;
 
 function TCodeToolManager.GetPasDocComments(Code: TCodeBuffer; X, Y: integer;
@@ -4073,8 +4097,9 @@ begin
   aMessage:='unknown identifier "'+GDBIdentifier+'"';
 end;
 
-function TCodeToolManager.CompleteCode(Code: TCodeBuffer; X,Y,TopLine: integer;
-  out NewCode: TCodeBuffer; out NewX, NewY, NewTopLine: integer): boolean;
+function TCodeToolManager.CompleteCode(Code: TCodeBuffer; X, Y,
+  TopLine: integer; out NewCode: TCodeBuffer; out NewX, NewY,
+  NewTopLine: integer; Interactive: Boolean): boolean;
 var
   CursorPos: TCodeXYPosition;
   NewPos: TCodeXYPosition;
@@ -4093,7 +4118,7 @@ begin
   CursorPos.Code:=Code;
   try
     Result:=FCurCodeTool.CompleteCode(CursorPos,TopLine,
-                                           NewPos,NewTopLine,SourceChangeCache);
+      NewPos,NewTopLine,SourceChangeCache,Interactive);
     if Result then begin
       NewX:=NewPos.X;
       NewY:=NewPos.Y;
@@ -4106,7 +4131,7 @@ end;
 
 function TCodeToolManager.CreateVariableForIdentifier(Code: TCodeBuffer; X, Y,
   TopLine: integer; out NewCode: TCodeBuffer; out NewX, NewY,
-  NewTopLine: integer): boolean;
+  NewTopLine: integer; Interactive: Boolean): boolean;
 var
   CursorPos: TCodeXYPosition;
   NewPos: TCodeXYPosition;
@@ -4121,7 +4146,7 @@ begin
   CursorPos.Code:=Code;
   try
     Result:=FCurCodeTool.CreateVariableForIdentifier(CursorPos,TopLine,
-                                             NewPos,NewTopLine,SourceChangeCache);
+      NewPos,NewTopLine,SourceChangeCache,Interactive);
     if Result then begin
       NewX:=NewPos.X;
       NewY:=NewPos.Y;
@@ -5632,6 +5657,12 @@ begin
   Result:=not OnCheckAbort();
 end;
 
+procedure TCodeToolManager.DoOnRescanFPCDirectoryCache(Sender: TObject);
+begin
+  if Assigned(FOnRescanFPCDirectoryCache) then
+    FOnRescanFPCDirectoryCache(Sender);
+end;
+
 procedure TCodeToolManager.DoOnToolTreeChange(Tool: TCustomCodeTool;
   NodesDeleting: boolean);
 var
@@ -5893,6 +5924,7 @@ begin
     TCodeTool(Result).OnFindUsedUnit:=@DoOnFindUsedUnit;
     TCodeTool(Result).OnGetSrcPathForCompiledUnit:=@DoOnGetSrcPathForCompiledUnit;
     TCodeTool(Result).OnGetMethodName:=@DoOnInternalGetMethodName;
+    TCodeTool(Result).OnRescanFPCDirectoryCache:=@DoOnRescanFPCDirectoryCache;
     TCodeTool(Result).DirectoryCache:=
       DirectoryCachePool.GetCache(ExtractFilePath(Code.Filename),
                                   true,true);

@@ -926,6 +926,7 @@ begin
   fDefines := TStringList.Create;
   fInvalidOptions := TStringList.Create;
   fSupportedCategories := TStringList.Create;
+  fSupportedCategories.Sorted := True;
   fGeneratedOptions := TStringList.Create;
   fRootOptGroup := TCompilerOptGroup.Create(Self, Nil);
 end;
@@ -1050,7 +1051,6 @@ begin
       else if AnsiStartsStr(Supported, Line) then
         Category := AddNewCategory(Copy(Line, Length(Supported)+1, Length(Line)));
     end;
-    fSupportedCategories.Sorted := True;
   finally
     sl.Free;
   end;
@@ -1205,6 +1205,7 @@ function TCompilerOptReader.ReadCategorySelections(aChar: Char): TStringList;
 // Get the selection list for a category using "fpc -i+char", for new FPC versions.
 begin
   Result:=RunTool(fCompilerExecutable, fParsedTarget + ' -i' + aChar);
+  Result.Sort;
 end;
 
 function TCompilerOptReader.ReadAndParseOptions: TModalResult;

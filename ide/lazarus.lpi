@@ -23,7 +23,7 @@
     <VersionInfo>
       <UseVersionInfo Value="True"/>
       <MajorVersionNr Value="1"/>
-      <MinorVersionNr Value="5"/>
+      <MinorVersionNr Value="7"/>
       <CharSet Value="04B0"/>
       <StringTable ProductName="Lazarus IDE" ProductVersion=""/>
     </VersionInfo>
@@ -803,6 +803,7 @@
       <Unit126>
         <Filename Value="mainbase.pas"/>
         <IsPartOfProject Value="True"/>
+        <UnitName Value="MainBase"/>
       </Unit126>
       <Unit127>
         <Filename Value="buildmanager.pas"/>

@@ -8,11 +8,8 @@
       <SearchPaths>
         <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
       </SearchPaths>
-      <Other>
-        <CompilerPath Value="$(CompPath)"/>
-      </Other>
     </CompilerOptions>
-    <Files Count="21">
+    <Files Count="25">
       <Item1>
         <Filename Value="fpvectorial.pas"/>
         <UnitName Value="fpvectorial"/>
@@ -74,8 +71,8 @@
         <UnitName Value="rawvectorialreadwrite"/>
       </Item15>
       <Item16>
-        <Filename Value="svgvectorialreader.pas"/>
-        <UnitName Value="svgvectorialreader"/>
+        <Filename Value="svgvectorialreader_rsvg.pas"/>
+        <UnitName Value="svgvectorialreader_rsvg"/>
       </Item16>
       <Item17>
         <Filename Value="svgvectorialwriter.pas"/>
@@ -97,8 +94,23 @@
         <Filename Value="htmlvectorialreader.pas"/>
         <UnitName Value="htmlvectorialreader"/>
       </Item21>
+      <Item22>
+        <Filename Value="svgvectorialreader.pas"/>
+        <UnitName Value="svgvectorialreader"/>
+      </Item22>
+      <Item23>
+        <Filename Value="fpvwmf.pas"/>
+        <UnitName Value="fpvWMF"/>
+      </Item23>
+      <Item24>
+        <Filename Value="wmfvectorialreader.pas"/>
+        <UnitName Value="wmfvectorialreader"/>
+      </Item24>
+      <Item25>
+        <Filename Value="wmfvectorialwriter.pas"/>
+        <UnitName Value="wmfvectorialwriter"/>
+      </Item25>
     </Files>
-    <Type Value="RunAndDesignTime"/>
     <RequiredPkgs Count="2">
       <Item1>
         <PackageName Value="LCL"/>
@@ -114,5 +126,8 @@
     <PublishOptions>
       <Version Value="2"/>
     </PublishOptions>
+    <CustomOptions Items="ExternHelp" Version="2">
+      <_ExternHelp Items="Count"/>
+    </CustomOptions>
   </Package>
 </CONFIG>

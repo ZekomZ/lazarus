@@ -549,9 +549,18 @@ type
     function GetCustomOptions(Parsed: TCompilerOptionsParseType): string;
     function TrimCustomOptions(o: string): string; override;
     function GetOptionsForCTDefines: string;
-
+    // rename macro in paths and options, not in BuildMacros, not in dependencies
     procedure RenameMacro(const OldName, NewName: string;
-              ChangeConditionals: boolean); virtual; // rename macro in paths and options, not in BuildMacros, not in dependencies
+              ChangeConditionals: boolean); virtual;
+    procedure MergeToIncludePaths(const AddSearchPath: string);
+    procedure MergeToLibraryPaths(const AddSearchPath: string);
+    procedure MergeToUnitPaths(const AddSearchPath: string);
+    procedure MergeToObjectPath(const AddSearchPath: string);
+    procedure MergeToSrcPath(const AddSearchPath: string);
+    procedure MergeToDebugPath(const AddSearchPath: string);
+    procedure RemoveFromUnitPaths(const RemSearchPath: string);
+    // compiler message types by id
+    function IDEMessageFlags: TCompilerMsgIDFlags; inline;
   public
     // not stored properties
     property ParsedOpts: TParsedCompilerOptions read FParsedOpts;
@@ -569,9 +578,6 @@ type
     property ExecuteAfter: TCompilationToolOptions read fExecuteAfter;
     property CreateMakefileOnBuild: boolean read FCreateMakefileOnBuild
                                             write SetCreateMakefileOnBuild;
-
-    // compiler message types by id
-    function IDEMessageFlags: TCompilerMsgIDFlags; inline;
   end;
 
   TBaseCompilerOptionsClass = class of TBaseCompilerOptions;
@@ -2448,6 +2454,41 @@ begin
   end;
 end;
 
+procedure TBaseCompilerOptions.MergeToIncludePaths(const AddSearchPath: string);
+begin
+  SetIncludePaths(MergeSearchPaths(GetIncludePaths,AddSearchPath));
+end;
+
+procedure TBaseCompilerOptions.MergeToLibraryPaths(const AddSearchPath: string);
+begin
+  SetLibraryPaths(MergeSearchPaths(GetLibraryPaths,AddSearchPath));
+end;
+
+procedure TBaseCompilerOptions.MergeToUnitPaths(const AddSearchPath: string);
+begin
+  SetUnitPaths(MergeSearchPaths(GetUnitPaths,AddSearchPath));
+end;
+
+procedure TBaseCompilerOptions.MergeToObjectPath(const AddSearchPath: string);
+begin
+  SetObjectPath(MergeSearchPaths(GetObjectPath,AddSearchPath));
+end;
+
+procedure TBaseCompilerOptions.MergeToSrcPath(const AddSearchPath: string);
+begin
+  SetSrcPath(MergeSearchPaths(GetSrcPath,AddSearchPath));
+end;
+
+procedure TBaseCompilerOptions.MergeToDebugPath(const AddSearchPath: string);
+begin
+  SetDebugPath(MergeSearchPaths(GetDebugPath,AddSearchPath));
+end;
+
+procedure TBaseCompilerOptions.RemoveFromUnitPaths(const RemSearchPath: string);
+begin
+  SetUnitPaths(RemoveSearchPaths(GetUnitPaths,RemSearchPath));
+end;
+
 function TBaseCompilerOptions.ShortenPath(const SearchPath: string;
   MakeAlwaysRelative: boolean): string;
 begin
@@ -2858,11 +2899,8 @@ begin
   if SmallerCode then
     OptimizeSwitches := OptimizeSwitches + 's';
   { OptimizationLevel     1 = Level 1    2 = Level 2    3 = Level 3 }
-  case (OptimizationLevel) of
-    1:  OptimizeSwitches := OptimizeSwitches + '1';
-    2:  OptimizeSwitches := OptimizeSwitches + '2';
-    3:  OptimizeSwitches := OptimizeSwitches + '3';
-  end;
+  if OptimizationLevel>0 then
+    OptimizeSwitches := OptimizeSwitches + IntToStr(OptimizationLevel);
   if OptimizeSwitches<>'' then
     switches := switches + ' -O'+OptimizeSwitches;
 
@@ -4290,7 +4328,7 @@ end;
 procedure TIDEBuildMacro.SetIdentifier(const AValue: string);
 begin
   if FIdentifier=AValue then exit;
-  if (AValue='') or (not IsValidIdent(AValue)) then
+  if not IsValidIdent(AValue) then
     raise Exception.Create('TIDEBuildMacro.SetIdentifier invalid identifier: '+AValue);
   FIdentifier:=AValue;
   {$IFDEF VerboseIDEModified}
@@ -4497,7 +4535,7 @@ begin
   for i:=0 to NewCount-1 do begin
     NewItem:=TIDEBuildMacro.Create;
     NewItem.LoadFromXMLConfig(AXMLConfig,Path+'Item'+IntToStr(i+1)+'/',DoSwitchPathDelims);
-    if (NewItem.Identifier<>'') and IsValidIdent(NewItem.Identifier) then
+    if IsValidIdent(NewItem.Identifier) then
       FItems.Add(NewItem)
     else
       NewItem.Free;

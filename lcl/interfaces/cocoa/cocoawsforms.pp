@@ -26,7 +26,7 @@ uses
   // RTL,FCL
   MacOSAll, CocoaAll, Classes,
   // LCL
-  Controls, Forms, Graphics, LCLType, LMessages, LCLProc,
+  Controls, Forms, Graphics, LCLType, Messages, LMessages, LCLProc,
   // Widgetset
   WSForms, WSLCLClasses, WSProc, LCLMessageGlue,
   // LCL Cocoa
@@ -62,7 +62,6 @@ type
   protected
   public
 //    class function  CreateHandle(const AWinControl: TWinControl; const AParams: TCreateParams): TLCLIntfHandle; override;
-//    class procedure ScrollBy(const AWinControl: TScrollingWinControl; const DeltaX, DeltaY: integer); override;
   end;
 
   { TCocoaWSScrollBox }
@@ -113,8 +112,8 @@ type
     class procedure SetBorderIcons(const AForm: TCustomForm; const ABorderIcons: TBorderIcons); override;
     class procedure SetFormBorderStyle(const AForm: TCustomForm; const AFormBorderStyle: TFormBorderStyle); override;
     class procedure SetFormStyle(const AForm: TCustomform; const AFormStyle, AOldFormStyle: TFormStyle); override;
-    class procedure SetPopupParent(const ACustomForm: TCustomForm;
-      const APopupMode: TPopupMode; const APopupParent: TCustomForm); override;
+    class procedure SetRealPopupParent(const ACustomForm: TCustomForm;
+      const APopupParent: TCustomForm); override;
 
     {need to override these }
     class function GetClientBounds(const AWincontrol: TWinControl; var ARect: TRect): Boolean; override;
@@ -223,7 +222,10 @@ begin
   win.setLevel(HintWindowLevel);
   TCocoaPanel(win).callback := TLCLWindowCallback.Create(win, AWinControl);
   win.setDelegate(win);
-  win.setAcceptsMouseMovedEvents(True);
+  if AWinControl.Perform(WM_NCHITTEST, 0, 0)=HTTRANSPARENT then
+    win.setIgnoresMouseEvents(True)
+  else
+    win.setAcceptsMouseMovedEvents(True);
 
   R.origin.x := 0;
   R.origin.y := 0;
@@ -478,6 +480,8 @@ var
     win.setTitle(ns);
     ns.release;
     win.setAcceptsMouseMovedEvents(True);
+    if AWinControl.Perform(WM_NCHITTEST, 0, 0)=HTTRANSPARENT then
+      win.setIgnoresMouseEvents(True);
 
     cnt.callback := TCocoaWindow(win).callback;
     cnt.callback.IsOpaque:=true;
@@ -661,30 +665,17 @@ begin
   end;
 end;
 
-class procedure TCocoaWSCustomForm.SetPopupParent(
-  const ACustomForm: TCustomForm; const APopupMode: TPopupMode;
-  const APopupParent: TCustomForm);
-var
-  PopupParent: TCustomForm;
+class procedure TCocoaWSCustomForm.SetRealPopupParent(
+  const ACustomForm: TCustomForm; const APopupParent: TCustomForm);
 begin
-  if not ACustomForm.HandleAllocated then Exit;
-  case APopupMode of
-    pmNone:
-      PopupParent := nil;
-    pmAuto:
-      PopupParent := Screen.ActiveForm;
-    pmExplicit:
-      PopupParent := APopupParent;
-  end;
-
-  if Assigned(PopupParent) then
-    NSWindow(PopupParent.Handle).addChildWindow_ordered(NSWindow(ACustomForm.Handle), NSWindowAbove)
-  else
   if Assigned(NSWindow(ACustomForm.Handle).parentWindow) then
     NSWindow(ACustomForm.Handle).parentWindow.removeChildWindow(NSWindow(ACustomForm.Handle));
+  if Assigned(APopupParent) then
+    NSWindow(APopupParent.Handle).addChildWindow_ordered(NSWindow(ACustomForm.Handle), NSWindowAbove);
 end;
 
-class function TCocoaWSCustomForm.GetClientBounds(const AWinControl: TWinControl; var ARect: TRect): Boolean;
+class function TCocoaWSCustomForm.GetClientBounds(
+  const AWincontrol: TWinControl; var ARect: TRect): Boolean;
 begin
   Result := False;
   if not AWinControl.HandleAllocated then Exit;
@@ -692,7 +683,8 @@ begin
   Result := True;
 end;
 
-class function TCocoaWSCustomForm.GetClientRect(const AWinControl: TWinControl; var ARect: TRect): Boolean;
+class function TCocoaWSCustomForm.GetClientRect(const AWincontrol: TWinControl;
+  var ARect: TRect): Boolean;
 var
   x, y: Integer;
 begin

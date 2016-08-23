@@ -12,6 +12,7 @@ actions/laz_delete.png
 actions/laz_edit.png
 actions/laz_highlighter.png
 actions/laz_open.png
+actions/laz_openunit.png
 actions/laz_refresh.png
 actions/laz_save.png
 actions/laz_set_color_default.png
@@ -77,6 +78,7 @@ menu/menu_redo.png
 menu/menu_reportingbug.png
 menu/menu_reset_debugger.png
 menu/menu_run.png
+menu/menu_run_withoutdebugging.png
 menu/menu_run_cursor.png
 menu/menu_run_file.png
 menu/menu_run_parameters.png
@@ -173,6 +175,14 @@ codeexplorer/ce_cycleinterface.png
 codeexplorer/ce_cycleimplementation.png
 codeexplorer/show_source.png
 codeexplorer/show_category.png
+designer/add_item_above.png
+designer/add_item_below.png
+designer/add_item_left.png
+designer/add_item_right.png
+designer/add_sep_above.png
+designer/add_sep_below.png
+designer/add_submenu_right.png
+designer/add_submenu_below.png
 designer/anchor_bottom.png
 designer/anchor_center_horizontal.png
 designer/anchor_center_vertical.png

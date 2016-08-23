@@ -1,3 +1,11 @@
+{
+ *****************************************************************************
+  This file is part of LazUtils.
+
+  See the file COPYING.modifiedLGPL.txt, included in this distribution,
+  for details about the license.
+ *****************************************************************************
+}
 unit lazCollections;
 
 {$mode objfpc}{$H+}
@@ -48,6 +56,7 @@ type
     procedure Grow(ADelta: integer);
     function PushItem(const AItem: T): TWaitResult;
     function PopItem(out AItem: T): TWaitResult;
+    function PopItemTimeout(out AItem: T; Timeout: cardinal): TWaitResult;
     procedure DoShutDown;
     property QueueSize: integer read FQueueSize;
     property TotalItemsPopped: QWord read FTotalItemsPopped;
@@ -243,10 +252,15 @@ begin
 end;
 
 function TLazThreadedQueue.PopItem(out AItem: T): TWaitResult;
+begin
+  result := PopItemTimeout(AItem, FPopTimeout);
+end;
+
+function TLazThreadedQueue.PopItemTimeout(out AItem: T; Timeout: cardinal): TWaitResult;
 var
   tc, ltc: int64;
 begin
-  if (FPopTimeout<>INFINITE) and (FPopTimeout<>0) then
+  if (Timeout<>INFINITE) and (Timeout<>0) then
     begin
     tc := GetTickCount64;
     ltc := 0;
@@ -255,19 +269,19 @@ begin
     result := wrSignaled
   else
     begin
-    repeat
-    if FPopTimeout=0 then
+    if Timeout=0 then
       begin
       result := wrTimeout;
       Exit;
-      end
-    else if FPopTimeout=INFINITE then
+      end;
+    repeat
+    if Timeout=INFINITE then
       RTLeventWaitFor(FHasItemEvent)
     else
       begin
-      RTLeventWaitFor(FHasItemEvent, FPopTimeout - ltc);
+      RTLeventWaitFor(FHasItemEvent, Timeout - ltc);
       ltc := GetTickCount64-tc;
-      if ltc > FPopTimeout then
+      if ltc > Timeout then
         begin
         result := wrTimeout;
         Exit;

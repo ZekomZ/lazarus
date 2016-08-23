@@ -32,6 +32,7 @@ const
   CHART_COMPONENT_IDE_PAGE = 'Chart';
   PERCENT = 0.01;
   clTAColor = $20000000; // = clDefault, but avoiding dependency on Graphics
+  DEFAULT_FONT_SIZE = 10;
 
 type
   EChartError = class(Exception);
@@ -57,6 +58,7 @@ type
   end;
 
   TPointArray = array of TPoint;
+  TDoublePointArray = array of TDoublepoint;
 
   TChartDistance = 0..MaxInt;
 
@@ -256,6 +258,25 @@ type
     property Item[AIndex: Integer]: TElem read GetItem; default;
   end;
 
+  PStr = ^String;  // PString is declared in system and in objpas!
+
+  TClassRegistryItem = class
+    FClass: TClass;
+    FCaption: String;
+    FCaptionPtr: PStr;
+    constructor Create(AClass: TClass; const ACaption: String);
+    constructor CreateRes(AClass: TClass; ACaptionPtr: PStr);
+  end;
+
+  TClassRegistry = class(TFPList)
+  public
+    destructor Destroy; override;
+    procedure Clear;
+    function GetCaption(AIndex: Integer): String;
+    function GetClass(AIndex: Integer): TClass;
+    function IndexOfClass(AClass: TClass): Integer;
+  end;
+
 const
   PUB_INT_SET_ALL = '';
   PUB_INT_SET_EMPTY = '-';
@@ -279,6 +300,7 @@ const
     (coords: (Infinity, Infinity, NegInfinity, NegInfinity));
   CASE_OF_TWO: array [Boolean, Boolean] of TCaseOfTwo =
     ((cotNone, cotSecond), (cotFirst, cotBoth));
+  ORIENTATION_UNITS_PER_DEG = 10;
 
 function BoundsSize(ALeft, ATop: Integer; ASize: TSize): TRect; inline;
 
@@ -329,16 +351,11 @@ var
   DrawData: TDrawDataRegistry;
   ShowMessageProc: TShowMessageProc;
 
-resourcestring
-  tasFailedSubcomponentRename = 'Failed to rename components: %s';
 
 implementation
 
 uses
-  StrUtils, TypInfo;
-
-const
-  ORIENTATION_UNITS_PER_DEG = 10;
+  StrUtils, TypInfo, TAChartStrConsts;
 
 function BoundsSize(ALeft, ATop: Integer; ASize: TSize): TRect; inline;
 begin
@@ -549,7 +566,7 @@ end;
 procedure THistory.DeleteOld(ACount: Integer);
 begin
   FCount -= ACount;
-  Move(FData[ACount], FData[0], SizeOf(FData[0]) * FCount);
+  Move(FData[ACount], FData[0], SizeInt(FCount) * SizeOf(FData[0]));
 end;
 
 function THistory.GetCapacity: Cardinal;
@@ -970,6 +987,64 @@ begin
     SetLength(FData, j);
   end;
 end;
+
+
+{ TClassRegistryItem }
+
+constructor TClassRegistryItem.Create(AClass: TClass; const ACaption: String);
+begin
+  FClass := AClass;
+  FCaption := ACaption;
+end;
+
+constructor TClassRegistryItem.CreateRes(AClass: TClass; ACaptionPtr: PStr);
+begin
+  FClass := AClass;
+  FCaptionPtr := ACaptionPtr;
+  if FCaptionPtr <> nil then FCaption := ACaptionPtr^;
+end;
+
+
+{ TClassRegistry }
+
+destructor TClassRegistry.Destroy;
+begin
+  Clear;
+  inherited;
+end;
+
+procedure TClassRegistry.Clear;
+var
+  i: Integer;
+begin
+  for i:= Count-1 downto 0 do
+    TObject(Items[i]).Free;
+  inherited;
+end;
+
+function TClassRegistry.GetCaption(AIndex: Integer): String;
+var
+  item: TClassRegistryItem;
+begin
+  item := TClassRegistryItem(Items[AIndex]);
+  if item.FCaptionPtr <> nil then
+    Result := item.FCaptionPtr^ else
+    Result := item.FCaption;
+end;
+
+function TClassRegistry.GetClass(AIndex: Integer): TClass;
+begin
+  Result := TClassRegistryItem(Items[AIndex]).FClass;
+end;
+
+function TClassRegistry.IndexOfClass(AClass: TClass): Integer;
+begin
+  for Result := 0 to Count-1 do
+    if TClassRegistryItem(Items[Result]).FClass = AClass then
+      exit;
+  Result := -1;
+end;
+
 
 initialization
 

@@ -1572,10 +1572,10 @@ end;
 function CpuNameToPtrSize(const CpuName: String): Integer;
 begin
   //'x86', 'i386', 'i486', 'i586', 'i686',
-  //'ia64', 'x86_64', 'powerpc',
+  //'ia64', 'x86_64', 'powerpc', aarch64
   //'sparc', 'arm'
   Result := 4;
-  if (LowerCase(CpuName) = 'ia64') or (LowerCase(CpuName) = 'x86_64')
+  if (LowerCase(CpuName) = 'ia64') or (LowerCase(CpuName) = 'x86_64') or (LowerCase(CpuName) = 'aarch64')
   then Result := 8;
 end;
 
@@ -1783,14 +1783,14 @@ begin
   FTheDebugger.FReRaiseBreak.Clear(Self);
   if DebuggerState = dsError then Exit;
 
-  S := FTheDebugger.ConvertToGDBPath(UTF8ToSys(FTheDebugger.FileName), cgptExeName);
+  S := FTheDebugger.ConvertToGDBPath(FTheDebugger.FileName, cgptExeName);
   Result := ExecuteCommand('-file-exec-and-symbols %s', [S], R);
   if not Result then exit;
   {$IFDEF darwin}
   if  (R.State = dsError) and (FTheDebugger.FileName <> '')
   then begin
     S := FTheDebugger.FileName + '/Contents/MacOS/' + ExtractFileNameOnly(FTheDebugger.FileName);
-    S := FTheDebugger.ConvertToGDBPath(UTF8ToSys(S), cgptExeName);
+    S := FTheDebugger.ConvertToGDBPath(S, cgptExeName);
     Result := ExecuteCommand('-file-exec-and-symbols %s', [S], R);
     if not Result then exit;
   end;
@@ -2202,7 +2202,9 @@ begin
     'mach-o-be',
     'mach-o-le',
     'pei-arm-little',
-    'pei-arm-big'
+    'pei-arm-big',
+    'elf64-littleaarch64',
+    'elf64-bigaarch64'
   ], True, False) of
     0..3: TargetInfo^.TargetCPU := 'x86';
     4: TargetInfo^.TargetCPU := 'x86_64'; //TODO: should we check, PtrSize must be 8, but what if not?
@@ -2242,6 +2244,13 @@ begin
       TargetInfo^.TargetIsBE := True;
       TargetInfo^.TargetCPU := 'arm';
     end;
+    10: begin
+      TargetInfo^.TargetCPU := 'aarch64';
+    end;
+    11: begin
+      TargetInfo^.TargetIsBE := True;
+      TargetInfo^.TargetCPU := 'aarch64';
+    end;
   else
     // Unknown filetype, use GDB cpu
     DebugLn(DBG_WARNINGS, '[WARNING] [Debugger.TargetInfo] Unknown FileType: %s, using GDB cpu', [AFileType]);
@@ -2256,7 +2265,7 @@ begin
   case StringCase(TargetInfo^.TargetCPU, [
     'x86', 'i386', 'i486', 'i586', 'i686',
     'ia64', 'x86_64', 'powerpc',
-    'sparc', 'arm'
+    'sparc', 'arm', 'aarch64'
   ], True, False) of
     0..4: begin // x86
       TargetInfo^.TargetRegisters[0] := '$eax';
@@ -2307,6 +2316,14 @@ begin
       TargetInfo^.TargetRegisters[0] := '$r0';
       TargetInfo^.TargetRegisters[1] := '$r1';
       TargetInfo^.TargetRegisters[2] := '$r2';
+    end;
+    10: begin // aarch64
+      //TargetInfo^.TargetRegisters[0] := '$r0';
+      //TargetInfo^.TargetRegisters[1] := '$r1';
+      //TargetInfo^.TargetRegisters[2] := '$r2';
+      TargetInfo^.TargetRegisters[0] := '$x0';
+      TargetInfo^.TargetRegisters[1] := '$x1';
+      TargetInfo^.TargetRegisters[2] := '$x2';
     end;
   else
     TargetInfo^.TargetRegisters[0] := '';
@@ -2800,7 +2817,7 @@ function TGDBMIDebugger.ConvertToGDBPath(APath: string; ConvType: TConvertToGDBP
 var
   esc: TGDBMIDebuggerFilenameEncoding;
 begin
-  Result := APath;
+  Result := UTF8ToWinCP(APath);
   // no need to process empty filename
   if Result = '' then exit;
 
@@ -5018,7 +5035,7 @@ begin
       // otherwise on second run within the same gdb session the workingdir
       // is set to c:\windows
       ExecuteCommand('-environment-cd %s', ['.'], []);
-      ExecuteCommand('-environment-cd %s', [FTheDebugger.ConvertToGDBPath(UTF8ToSys(FTheDebugger.WorkingDir), cgptCurDir)], [cfCheckError]);
+      ExecuteCommand('-environment-cd %s', [FTheDebugger.ConvertToGDBPath(FTheDebugger.WorkingDir, cgptCurDir)], [cfCheckError]);
     end;
 
     TargetInfo^.TargetFlags := [tfHasSymbols]; // Set until proven otherwise
@@ -5029,7 +5046,7 @@ begin
 
     // also call execute -exec-arguments if there are no arguments in this run
     // so the possible arguments of a previous run are cleared
-    ExecuteCommand('-exec-arguments %s', [UTF8ToSys(FTheDebugger.Arguments)], [cfCheckState]);
+    ExecuteCommand('-exec-arguments %s', [UTF8ToWinCP(FTheDebugger.Arguments)], [cfCheckState]);
 
     {$IF defined(UNIX) or defined(DBG_ENABLE_TERMINAL)}
     InitConsole;
@@ -5234,7 +5251,7 @@ begin
   FSuccess := False;
 
   if not ExecuteCommand('-file-exec-and-symbols %s',
-                        [FTheDebugger.ConvertToGDBPath(UTF8ToSys(''), cgptExeName)], R)
+                        [FTheDebugger.ConvertToGDBPath('', cgptExeName)], R)
   then
     R.State := dsError;
   if R.State = dsError then begin
@@ -5330,7 +5347,7 @@ begin
     ExecuteCommand('ptype TObject', [], R);
     if pos('NO SYMBOL TABLE IS LOADED', UpperCase(FFullCmdReply)) > 0 then begin
       ExecuteCommand('-file-exec-and-symbols %s',
-                     [FTheDebugger.ConvertToGDBPath(UTF8ToSys(FTheDebugger.FileName), cgptExeName)], R);
+                     [FTheDebugger.ConvertToGDBPath(FTheDebugger.FileName, cgptExeName)], R);
       DoSetPascal;
     end;
   end;

@@ -30,7 +30,6 @@ type
       FBoundsReportedToChildren: boolean;
       FIsOpaque:boolean;
       FIsEventRouting:boolean;
-    function CheckMouseButtonDown(Event: NSEvent; AButton: Integer): Cardinal;
     function GetHasCaret: Boolean;
     procedure SetHasCaret(AValue: Boolean);
     function GetIsOpaque: Boolean;
@@ -51,7 +50,7 @@ type
     function GetTarget: TObject;
     function GetCallbackObject: TObject;
     function GetCaptureControlCallback: ICommonCallBack;
-    function MouseUpDownEvent(Event: NSEvent): Boolean; virtual;
+    function MouseUpDownEvent(Event: NSEvent; AForceAsMouseUp: Boolean = False): Boolean; virtual;
     function KeyEvent(Event: NSEvent; AForceAsKeyDown: Boolean = False): Boolean; virtual;
     procedure MouseClick; virtual;
     function MouseMove(Event: NSEvent): Boolean; virtual;
@@ -100,6 +99,7 @@ type
     class procedure SetColor(const AWinControl: TWinControl); override;
     class procedure ShowHide(const AWinControl: TWinControl); override;
     class procedure Invalidate(const AWinControl: TWinControl); override;
+    // class procedure ScrollBy(const AWinControl: TWinControl; DeltaX, DeltaY: integer); override;
   end;
 
 
@@ -108,7 +108,7 @@ type
   TLCLCustomControlCallback = class(TLCLCommonCallback)
   public
     function MouseMove(Event: NSEvent): Boolean; override;
-    function MouseUpDownEvent(Event: NSEvent): Boolean; override;
+    function MouseUpDownEvent(Event: NSEvent; AForceAsMouseUp: Boolean = False): Boolean; override;
   end;
 
   { TCocoaWSCustomControl }
@@ -119,9 +119,6 @@ type
       const AParams: TCreateParams): TLCLIntfHandle; override;
   end;
 
-const
-  DblClickThreshold = 3;// max Movement between two clicks of a DblClick
-
 // Utility WS functions
 
 function EmbedInScrollView(AView: NSView): TCocoaScrollView;
@@ -130,6 +127,9 @@ implementation
 
 uses
   CocoaInt;
+
+var
+  LastMouse: TLastMouseInfo;
 
 {$I mackeycodes.inc}
 
@@ -159,9 +159,9 @@ begin
   Result:=True;
 end;
 
-function TLCLCustomControlCallback.MouseUpDownEvent(Event: NSEvent): Boolean;
+function TLCLCustomControlCallback.MouseUpDownEvent(Event: NSEvent; AForceAsMouseUp: Boolean = False): Boolean;
 begin
-  inherited MouseUpDownEvent(Event);
+  inherited MouseUpDownEvent(Event, AForceAsMouseUp);
   Result := True;
 end;
 
@@ -334,6 +334,8 @@ var
 
     IsSysKey := (Event.modifierFlags and NSCommandKeyMask) <> 0;
     KeyData := (Ord(Event.isARepeat) + 1) or Event.keyCode shl 16;
+    if (Event.modifierFlags and NSAlternateKeyMask) <> 0 then
+      KeyData := KeyData or $20000000;   // So that MsgKeyDataToShiftState recognizes Alt key, see bug 30129
     KeyCode := Event.keyCode;
 
     //non-printable keys (see mackeycodes.inc)
@@ -617,6 +619,8 @@ var
   end;
 
   function HandleFlagsChanged: Boolean;
+  const
+    cModifiersOfInterest: NSUInteger = (NSControlKeyMask or NSShiftKeyMask or NSAlphaShiftKeyMask or NSAlternateKeyMask or NSCommandKeyMask);
   var
     CurMod, Diff: NSUInteger;
   begin
@@ -624,7 +628,7 @@ var
     SendChar := False;
     CurMod := Event.modifierFlags;
     //see what changed. we only care of bits 16 through 20
-    Diff := (PrevKeyModifiers xor CurMod) and $1F0000;
+    Diff := (PrevKeyModifiers xor CurMod) and cModifiersOfInterest;
 
     case Diff of
       0          : Exit;  //nothing (that we cared of) changed
@@ -676,27 +680,7 @@ begin
   LCLSendClickedMsg(Target);
 end;
 
-function TLCLCommonCallback.CheckMouseButtonDown(Event: NSEvent; AButton: Integer): Cardinal;
-const
-  // array of clickcount x buttontype
-  MSGKIND: array[0..3, 1..4] of Integer =
-  (
-    (LM_LBUTTONDOWN, LM_LBUTTONDBLCLK, LM_LBUTTONTRIPLECLK, LM_LBUTTONQUADCLK),
-    (LM_RBUTTONDOWN, LM_RBUTTONDBLCLK, LM_RBUTTONTRIPLECLK, LM_RBUTTONQUADCLK),
-    (LM_MBUTTONDOWN, LM_MBUTTONDBLCLK, LM_MBUTTONTRIPLECLK, LM_MBUTTONQUADCLK),
-    (LM_XBUTTONDOWN, LM_XBUTTONDBLCLK, LM_XBUTTONTRIPLECLK, LM_XBUTTONQUADCLK)
-  );
-var
-  ClickCount: Integer;
-begin
-  ClickCount := Event.clickCount;
-  if ClickCount > 4 then
-    ClickCount := 1;
-
-  Result := MSGKIND[AButton][ClickCount];
-end;
-
-function TLCLCommonCallback.MouseUpDownEvent(Event: NSEvent): Boolean;
+function TLCLCommonCallback.MouseUpDownEvent(Event: NSEvent; AForceAsMouseUp: Boolean = False): Boolean;
 const
   MSGKINDUP: array[0..3] of Integer = (LM_LBUTTONUP, LM_RBUTTONUP, LM_MBUTTONUP, LM_XBUTTONUP);
 var
@@ -706,6 +690,7 @@ var
   MButton: NSInteger;
   lCaptureControlCallback: ICommonCallback;
   //Str: string;
+  lEventType: NSEventType;
 begin
   Result := False; // allow cocoa to handle message
 
@@ -721,8 +706,6 @@ begin
     FIsEventRouting:=false;
     exit;
   end;
-
-  // idea of multi click implementation is taken from gtk
 
   FillChar(Msg, SizeOf(Msg), #0);
 
@@ -742,16 +725,25 @@ begin
     MButton := 3;
   end;
 
-
-  case Event.type_ of
+  lEventType := Event.type_;
+  if AForceAsMouseUp then
+    lEventType := NSLeftMouseUp;
+  case lEventType of
     NSLeftMouseDown,
     NSRightMouseDown,
     NSOtherMouseDown:
     begin
-      Msg.Msg := CheckMouseButtonDown(Event,MButton);
+      Msg.Msg := CheckMouseButtonDownUp(TLCLIntfHandle(Owner),FTarget,LastMouse,
+        FTarget.ClientToScreen(Point(Msg.XPos, Msg.YPos)),MButton+1,True);
+      case LastMouse.ClickCount of
+        2: Msg.Keys := msg.Keys or MK_DOUBLECLICK;
+        3: Msg.Keys := msg.Keys or MK_TRIPLECLICK;
+        4: Msg.Keys := msg.Keys or MK_QUADCLICK;
+      end;
 
       NotifyApplicationUserInput(Target, Msg.Msg);
-      Result := DeliverMessage(Msg) <> 0;
+      DeliverMessage(Msg);
+      Result := True;
 
       // TODO: Check if Cocoa has special context menu check event
       if (Event.type_ = NSRightMouseDown) and (GetTarget is TControl) then
@@ -763,17 +755,25 @@ begin
         ScreenMousePos(MousePos);
         MsgContext.XPos := Round(MousePos.X);
         MsgContext.YPos := Round(MousePos.Y);
-        Result := DeliverMessage(MsgContext) <> 0;
+        DeliverMessage(MsgContext);
+        Result := True;
       end;
     end;
     NSLeftMouseUp,
     NSRightMouseUp,
     NSOtherMouseUp:
     begin
-      Msg.Msg := MSGKINDUP[MButton];
+      Msg.Msg := CheckMouseButtonDownUp(TLCLIntfHandle(Owner),FTarget,LastMouse,
+        FTarget.ClientToScreen(Point(Msg.XPos, Msg.YPos)),MButton+1,False);
+      case LastMouse.ClickCount of
+        2: Msg.Keys := msg.Keys or MK_DOUBLECLICK;
+        3: Msg.Keys := msg.Keys or MK_TRIPLECLICK;
+        4: Msg.Keys := msg.Keys or MK_QUADCLICK;
+      end;
 
       NotifyApplicationUserInput(Target, Msg.Msg);
-      Result := DeliverMessage(Msg) <> 0;
+      DeliverMessage(Msg);
+      Result := True;
     end;
   end;
 
@@ -849,7 +849,7 @@ begin
 
   FillChar(Msg, SizeOf(Msg), #0);
   Msg.Msg := LM_MOUSEMOVE;
-  Msg.Keys := CocoaModifiersToKeyState(Event.modifierFlags) or CocoaPressedMouseButtonsToKeyState(Event.pressedMouseButtons);
+  Msg.Keys := CocoaModifiersToKeyState(Event.modifierFlags) or CocoaPressedMouseButtonsToKeyState(NSEvent.pressedMouseButtons);
   Msg.XPos := mp.X;
   Msg.YPos := mp.Y;
 

@@ -247,7 +247,6 @@ type
   PROPERTYKEY = _tagpropertykey;
   REFPROPERTYKEY = ^PROPERTYKEY;
   REFPROPVARIANT = ^TPROPVARIANT;
-{$ifdef UseVistaDialogs}
   IEnumShellItems = interface(IUnknown)
     ['{70629033-e363-4a28-a567-0db78006e6d7}']
     function Next(celt: ULONG; out rgelt: IShellItem; var pceltFetched: ULONG): HResult; stdcall;
@@ -355,7 +354,6 @@ type
     function GetProperties(var ppStore: IPropertyStore): HResult; stdcall;
     function ApplyProperties(psi: IShellItem; pStore: IPropertyStore; hwnd: HWND; pSink: IFileOperationProgressSink): HResult; stdcall;
   end;
-{$endif}
 
 // AlphaBlend is only defined for win98&2k and up
 // load dynamic and use ownfunction if not defined
@@ -411,6 +409,7 @@ type
 
   function SetTimer(hWnd:HWND; nIDEvent:UINT_PTR; uElapse:UINT; lpTimerFunc: TIMERPROC): UINT_PTR; stdcall; external 'user32' name 'SetTimer';
   function KillTimer(hWnd:HWND; uIDEvent:UINT_PTR):WINBOOL; stdcall; external 'user32' name 'KillTimer';
+  function HasManifest: Boolean;
 
 implementation
 
@@ -883,6 +882,19 @@ begin
   Result := E_NOTIMPL;
 end;
 
+function GetComCtlVersion: Cardinal;
+begin
+  if (ComCtlVersion <> 0) then
+    Result := ComCtlVersion
+  else
+    Result := GetFileVersion(comctl32);
+end;
+
+function HasManifest: Boolean;
+begin
+  Result := (GetComCtlVersion >= ComCtlVersionIE6);
+end;
+
 const
   msimg32lib = 'msimg32.dll';
   user32lib = 'user32.dll';
@@ -903,6 +915,7 @@ var
 begin
   if WindowsVersion = wvUnknown then
     UpdateWindowsVersion;
+  ComCtlVersion := GetComCtlVersion;
 
   GetComboBoxInfo := nil;
   GetMenuBarInfo := nil;
@@ -1037,6 +1050,7 @@ begin
     FreeLibrary(comctl32handle);
   comctl32handle := 0;
 end;
+
 
 initialization
   Initialize;

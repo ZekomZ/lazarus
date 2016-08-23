@@ -66,18 +66,21 @@ type
     class procedure CreatePreviewDialogControl(PreviewDialog: TPreviewFileDialog; SelWidget: PGtkWidget); virtual;
   published
     class function CreateHandle(const ACommonDialog: TCommonDialog): THandle; override;
+    class function QueryWSEventCapabilities(const ACommonDialog: TCommonDialog): TCDWSEventCapabilities; override;
   end;
 
   { TGtk2WSSaveDialog }
 
   TGtk2WSSaveDialog = class(TWSSaveDialog)
   published
+    class function QueryWSEventCapabilities(const ACommonDialog: TCommonDialog): TCDWSEventCapabilities; override;
   end;
 
   { TGtk2WSSelectDirectoryDialog }
 
   TGtk2WSSelectDirectoryDialog = class(TWSSelectDirectoryDialog)
   published
+    class function QueryWSEventCapabilities(const ACommonDialog: TCommonDialog): TCDWSEventCapabilities; override;
   end;
 
   { TGtk2WSColorDialog }
@@ -87,6 +90,7 @@ type
     class procedure SetCallbacks(const AGtkWidget: PGtkWidget; const AWidgetInfo: PWidgetInfo); virtual;
   published
     class function CreateHandle(const ACommonDialog: TCommonDialog): THandle; override;
+    class function QueryWSEventCapabilities(const ACommonDialog: TCommonDialog): TCDWSEventCapabilities; override;
   end;
 
   { TGtk2WSColorButton }
@@ -102,6 +106,7 @@ type
     class procedure SetCallbacks(const AGtkWidget: PGtkWidget; const AWidgetInfo: PWidgetInfo); virtual;
   published
     class function  CreateHandle(const ACommonDialog: TCommonDialog): THandle; override;
+    class function QueryWSEventCapabilities(const ACommonDialog: TCommonDialog): TCDWSEventCapabilities; override;
   end;
 
 // forward declarations
@@ -626,7 +631,12 @@ begin
       or GDK_KEY_RELEASE_MASK or GDK_KEY_PRESS_MASK);
   LCLComponent:=GetLCLObject(Widget);
   if LCLComponent is TCommonDialog then
+  begin
+    {$ifdef DebugCommonDialogEvents}
+    debugln(['GTKDialogRealizeCB calling DoShow']);
+    {$endif}
     TCommonDialog(LCLComponent).DoShow;
+  end;
   Result:=true;
 end;
 
@@ -636,6 +646,8 @@ end;
   Result: GBoolean
 
   This function is called, before a commondialog is destroyed
+  (Only when the user aborts the dialog, not if the dialog closes as the result
+   of a click on one of itś buttons)
 -------------------------------------------------------------------------------}
 function gtkDialogCloseQueryCB(widget: PGtkWidget; data: gPointer): GBoolean;
   cdecl;
@@ -643,20 +655,30 @@ var
   theDialog : TCommonDialog;
   CanClose: boolean;
 begin
+  {$ifdef DebugCommonDialogEvents}
+  debugln(['>>>>gtkDialogCloseQueryCB A']);
+  {$endif}
   Result := False; // true = do nothing, false = destroy or hide window
   if (Data=nil) then ;
   // data is not the commondialog. Get it manually.
   theDialog := TCommonDialog(GetLCLObject(Widget));
   if theDialog=nil then exit;
   if theDialog.OnCanClose<>nil then begin
+    theDialog.UserChoice := mrCancel;
     CanClose:=True;
-    theDialog.OnCanClose(theDialog,CanClose);
+    {$ifdef DebugCommonDialogEvents}
+    debugln(['gtkDialogCloseQueryCB calling DoCanClose']);
+    {$endif}
+    theDialog.DoCanClose(CanClose);
     Result:=not CanClose;
   end;
   if not Result then begin
     StoreCommonDialogSetup(theDialog);
     DestroyCommonDialogAddOns(theDialog);
   end;
+  {$ifdef DebugCommonDialogEvents}
+  debugln(['gtkDialogCloseQueryCB End']);
+  {$endif}
 end;
 
 {-------------------------------------------------------------------------------
@@ -668,10 +690,16 @@ end;
 -------------------------------------------------------------------------------}
 function gtkDialogDestroyCB(widget: PGtkWidget; data: gPointer): GBoolean; cdecl;
 begin
+  {$ifdef DebugCommonDialogEvents}
+  debugln(['gtkDialogDestroyCB A']);
+  {$endif}
   Result := True;
   if (Widget=nil) then ;
-  TCommonDialog(data).UserChoice := mrAbort;
+  TCommonDialog(data).UserChoice := mrCancel;
   TCommonDialog(data).Close;
+  {$ifdef DebugCommonDialogEvents}
+  debugln(['gtkDialogDestroyCB End']);
+  {$endif}
 end;
 
 {-------------------------------------------------------------------------------
@@ -685,7 +713,6 @@ end;
 function GTKDialogKeyUpDownCB(Widget: PGtkWidget; Event : pgdkeventkey;
   Data: gPointer) : GBoolean; cdecl;
 begin
-  //debugln('GTKDialogKeyUpDownCB A ');
   Result:=CallBackDefaultReturn;
 
   if (Widget=nil) then ;
@@ -776,6 +803,22 @@ begin
       UpdateDetailView(TOpenDialog(theDialog));
     end;
   end;
+end;
+
+{ TGtk2WSSelectDirectoryDialog }
+
+class function TGtk2WSSelectDirectoryDialog.QueryWSEventCapabilities(
+  const ACommonDialog: TCommonDialog): TCDWSEventCapabilities;
+begin
+  Result := [cdecWSPerformsDoShow];
+end;
+
+{ TGtk2WSSaveDialog }
+
+class function TGtk2WSSaveDialog.QueryWSEventCapabilities(
+  const ACommonDialog: TCommonDialog): TCDWSEventCapabilities;
+begin
+  Result := [cdecWSPerformsDoShow];
 end;
 
 // ---------------------- END OF signals ---------------------------------------
@@ -1045,6 +1088,12 @@ begin
   //  PopulateFileAndDirectoryLists(FileSelWidget, InitialFilter);
 end;
 
+class function TGtk2WSOpenDialog.QueryWSEventCapabilities(
+  const ACommonDialog: TCommonDialog): TCDWSEventCapabilities;
+begin
+  Result := [cdecWSPerformsDoShow];
+end;
+
 { TGtk2WSFileDialog }
 
 class procedure TGtk2WSFileDialog.SetCallbacks(const AGtkWidget: PGtkWidget;
@@ -1217,7 +1266,6 @@ class function TGtk2WSCommonDialog.CreateHandle(
   const ACommonDialog: TCommonDialog): THandle;
 begin
   Result := 0;
-  DebugLn('TGtkWSCommonDialog.CreateHandle is generic dialog handle constructor => implement CreateHandle for: ', dbgsName(ACommonDialog))
 end;
 
 class procedure TGtk2WSCommonDialog.ShowModal(const ACommonDialog: TCommonDialog);
@@ -1271,6 +1319,12 @@ begin
   WidgetInfo^.LCLObject := ACommonDialog;
   TGtk2WSCommonDialog.SetSizes(Widget, WidgetInfo);
   SetCallbacks(Widget, WidgetInfo);
+end;
+
+class function TGtk2WSColorDialog.QueryWSEventCapabilities(
+  const ACommonDialog: TCommonDialog): TCDWSEventCapabilities;
+begin
+  Result := [cdecWSPerformsDoShow];
 end;
 
 { TGtk2WSFontDialog }
@@ -1346,6 +1400,12 @@ begin
   WidgetInfo^.LCLObject := ACommonDialog;
   TGtk2WSCommonDialog.SetSizes(Widget, WidgetInfo);
   SetCallbacks(Widget, WidgetInfo);
+end;
+
+class function TGtk2WSFontDialog.QueryWSEventCapabilities(
+  const ACommonDialog: TCommonDialog): TCDWSEventCapabilities;
+begin
+  Result := [cdecWSPerformsDoShow];
 end;
 
 end.
